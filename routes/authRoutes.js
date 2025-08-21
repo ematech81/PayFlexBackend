@@ -4,13 +4,12 @@ const { body } = require("express-validator");
 const {
   register,
   login,
-  resendEmailOtp,
-  verifyEmailOtp,
+
   // setPin,
   me,
-  sendPhoneOtp,
-  resendPhoneOtp,
-  verifyPhoneOtp,
+  // sendPhoneOtp,
+  resendPhoneOtpPublic,
+  verifyPhoneOtpPublic,
 } = require("../controllers/authController");
 const { protect } = require("../middleware/auth");
 
@@ -34,21 +33,14 @@ router.post(
   login
 );
 
-router.post("/resend-email-otp", [body("userId").notEmpty()], resendEmailOtp);
-router.post(
-  "/verify-email-otp",
-  [body("userId").notEmpty(), body("otp").isLength({ min: 4 })],
-  verifyEmailOtp
-);
-
 // ---- Phone OTP (post-login) ----
-router.post("/phone/send-otp", protect, sendPhoneOtp);
-router.post("/phone/resend-otp", protect, resendPhoneOtp);
+// router.post("/phone/send-otp", protect, sendPhoneOtp);
+router.post("/phone/resend-otp", protect, resendPhoneOtpPublic);
 router.post(
   "/phone/verify-otp",
   protect,
   [body("otp").isLength({ min: 6, max: 6 })],
-  verifyPhoneOtp
+  verifyPhoneOtpPublic
 );
 
 // Authenticated profile

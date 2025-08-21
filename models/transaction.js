@@ -1,11 +1,17 @@
 const mongoose = require("mongoose");
 
 const transactionSchema = new mongoose.Schema({
-  serviceType: { type: String, required: true },
-  phoneNumber: { type: String, required: true },
-  amount: { type: Number, required: true },
-  status: { type: String, default: "pending" },
+  serviceID: String,
+  phoneNumber: String,
+  amount: Number,
   reference: { type: String, unique: true },
+  status: {
+    type: String,
+    enum: ["pending", "success", "failed"],
+    default: "pending",
+  },
+  transactionId: String,
+  response: Object,
   createdAt: { type: Date, default: Date.now },
 });
 

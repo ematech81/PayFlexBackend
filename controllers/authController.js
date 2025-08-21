@@ -2,7 +2,6 @@ const { validationResult } = require("express-validator");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
-const nodemailer = require("nodemailer");
 const User = require("../models/user");
 
 // ---------- Helpers ----------
@@ -14,53 +13,26 @@ const signToken = (user) =>
 /** Create a 6-digit numeric OTP as a string */
 const generateOtp = () => crypto.randomInt(100000, 999999).toString();
 
-/** Create a nodemailer transporter (use your SMTP of choice) */
-const mailer = nodemailer.createTransport({
-  service: "gmail", // or configure host/port/secure for custom SMTP
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
-
-/** Send email (simple helper) */
-async function sendEmail({ to, subject, html, text }) {
-  await mailer.sendMail({
-    from: `"${process.env.EMAIL_FROM_NAME || "PayFlex"}" <${
-      process.env.EMAIL_USER
-    }>`,
-    to,
-    subject,
-    text,
-    html,
-  });
-}
-
-// --- Phone OTP helpers & endpoints ---
+/** --- SMS (Twilio) setup; logs OTP in dev if not configured --- */
 const twilio = require("twilio");
 const client =
   process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN
     ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
     : null;
+
 const OTP_EXP_MIN = 10; // 10 minutes expiry
 const RESEND_COOLDOWN_SEC = 60; // min 60s between sends
 
-/** Infer last-sent time from expiry (sentAt = expires - OTP_EXP_MIN) */
-function getLastSentFromExpiry(expires) {
-  if (!expires) return null;
-  return new Date(new Date(expires).getTime() - OTP_EXP_MIN * 60 * 1000);
-}
-
-/** Very light E.164 normalizer for NG numbers (fallback: return as-is) */
+/** Light E.164 formatter for NG numbers */
 function toE164(phone) {
   const p = (phone || "").trim();
   if (p.startsWith("+")) return p;
-  if (/^0\d{10}$/.test(p)) return `+234${p.slice(1)}`; // 0xxxxxxxxxx -> +234xxxxxxxxxx
+  if (/^0\d{10}$/.test(p)) return `+234${p.slice(1)}`;
   if (/^234\d{10}$/.test(p)) return `+${p}`;
-  return p;
+  return p; // fallback (don’t block)
 }
 
-/** Send SMS via Twilio (dev-safe: logs OTP if Twilio not configured) */
+/** Send SMS via Twilio (or log in dev) */
 async function sendSmsOtp(phone, otp) {
   const to = toE164(phone);
   if (!client || !process.env.TWILIO_PHONE_NUMBER) {
@@ -74,23 +46,29 @@ async function sendSmsOtp(phone, otp) {
   });
 }
 
-/** Mask phone for response */
+/** Mask phone for responses */
 function maskPhone(p) {
   if (!p) return null;
   const last4 = p.slice(-4);
   return `****${last4}`;
 }
 
+/** Infer last-sent time from expiry (sentAt = expires - OTP_EXP_MIN) */
+function getLastSentFromExpiry(expires) {
+  if (!expires) return null;
+  return new Date(new Date(expires).getTime() - OTP_EXP_MIN * 60 * 1000);
+}
+
 // ---------- Controllers ----------
 
 /**
- * Register
- * - Creates user
- * - Hashes password
- * - Generates + hashes email OTP, sets 10-min expiry
- * - Sends OTP email
- * - Sends OTP phone
- * - Returns userId (NO token yet; require email verification)
+ * POST /api/auth/register
+ * Body: { firstName, lastName, email, phone, password }
+ * Flow:
+ *  - Creates user (email stored as-is; no email verification)
+ *  - Generates + stores HASHED phone OTP (10min expiry)
+ *  - Sends OTP SMS
+ *  - Returns { userId, phoneMasked, expiresInMinutes } (NO token yet)
  */
 exports.register = async (req, res, next) => {
   try {
@@ -108,44 +86,31 @@ exports.register = async (req, res, next) => {
 
     const passwordHash = await bcrypt.hash(password, 12);
 
-    // Generate + hash OTP for email
-    const emailOtpPlain = generateOtp();
-    const emailOtpHash = await bcrypt.hash(emailOtpPlain, 10);
-    const emailOtpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
-
+    // Create user first
     const user = await User.create({
       firstName,
       lastName,
       email: email?.toLowerCase(),
       phone,
       passwordHash,
-      isEmailVerified: false,
+      isEmailVerified: false, // optional; kept for model compatibility
       isPhoneVerified: false,
-      emailOTP: emailOtpHash, // store HASH (best practice)
-      emailOTPExpires: emailOtpExpires,
     });
 
-    // Send OTP email
-    await sendEmail({
-      to: user.email,
-      subject: "Verify your email",
-      text: `Your verification code is ${emailOtpPlain}. It expires in 10 minutes.`,
-      html: `
-        <div style="font-family:Arial,sans-serif;">
-          <h2>Verify your email</h2>
-          <p>Your verification code is:</p>
-          <p style="font-size:28px;letter-spacing:4px;"><b>${emailOtpPlain}</b></p>
-          <p>This code expires in 10 minutes.</p>
-        </div>
-      `,
-    });
+    // Generate + hash phone OTP
+    const otp = generateOtp();
+    user.phoneOTP = await bcrypt.hash(otp, 10);
+    user.phoneOTPExpires = new Date(Date.now() + OTP_EXP_MIN * 60 * 1000);
+    await user.save();
 
-    // We don’t return a token yet; require email verification first
+    // Send SMS
+    await sendSmsOtp(user.phone, otp);
+
     res.status(201).json({
-      message:
-        "Registration successful. Check your email for the verification code.",
+      message: "Registration successful. We sent a code to your phone.",
       userId: user._id,
-      email: user.email,
+      phone: maskPhone(user.phone),
+      expiresInMinutes: OTP_EXP_MIN,
     });
   } catch (e) {
     next(e);
@@ -153,53 +118,66 @@ exports.register = async (req, res, next) => {
 };
 
 /**
- * Resend Email OTP
- * - Regenerates OTP (optional: throttle on client/UI)
+ * POST /api/auth/phone/resend
+ * Body: { userId }
+ * Public (used right after registration screen)
  */
-exports.resendEmailOtp = async (req, res, next) => {
+exports.resendPhoneOtpPublic = async (req, res, next) => {
   try {
     const { userId } = req.body;
     if (!userId) return res.status(400).json({ message: "userId is required" });
 
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ message: "User not found" });
-    if (user.isEmailVerified)
-      return res.status(400).json({ message: "Email already verified" });
+    if (!user.phone)
+      return res.status(400).json({ message: "No phone on file" });
+    if (user.isPhoneVerified)
+      return res.status(400).json({ message: "Phone already verified" });
 
-    const emailOtpPlain = generateOtp();
-    const emailOtpHash = await bcrypt.hash(emailOtpPlain, 10);
-    user.emailOTP = emailOtpHash;
-    user.emailOTPExpires = new Date(Date.now() + 10 * 60 * 1000);
+    // Throttle resend
+    if (user.phoneOTPExpires) {
+      const lastSent = getLastSentFromExpiry(user.phoneOTPExpires);
+      if (
+        lastSent &&
+        Date.now() - lastSent.getTime() < RESEND_COOLDOWN_SEC * 1000
+      ) {
+        const wait = Math.ceil(
+          (RESEND_COOLDOWN_SEC * 1000 - (Date.now() - lastSent.getTime())) /
+            1000
+        );
+        return res
+          .status(429)
+          .json({
+            message: `Please wait ${wait}s before requesting another code`,
+          });
+      }
+    }
+
+    // New OTP
+    const otp = generateOtp();
+    user.phoneOTP = await bcrypt.hash(otp, 10);
+    user.phoneOTPExpires = new Date(Date.now() + OTP_EXP_MIN * 60 * 1000);
     await user.save();
 
-    await sendEmail({
-      to: user.email,
-      subject: "Your new email verification code",
-      text: `Your verification code is ${emailOtpPlain}. It expires in 10 minutes.`,
-      html: `
-        <div style="font-family:Arial,sans-serif;">
-          <h2>New verification code</h2>
-          <p>Your verification code is:</p>
-          <p style="font-size:28px;letter-spacing:4px;"><b>${emailOtpPlain}</b></p>
-          <p>This code expires in 10 minutes.</p>
-        </div>
-      `,
-    });
+    await sendSmsOtp(user.phone, otp);
 
-    res.json({ message: "Verification code resent" });
+    res.json({
+      message: "OTP resent successfully",
+      to: maskPhone(user.phone),
+      expiresInMinutes: OTP_EXP_MIN,
+    });
   } catch (e) {
     next(e);
   }
 };
 
 /**
- * Verify Email OTP
- * - Compares provided OTP with stored HASH
- * - Checks expiry
- * - Marks isEmailVerified = true, clears fields
- * - Optionally returns a token for immediate login UX
+ * POST /api/auth/phone/verify
+ * Body: { userId, otp }
+ * Public (verifies right after registration)
+ * On success: marks phone verified, clears OTP, returns JWT + user
  */
-exports.verifyEmailOtp = async (req, res, next) => {
+exports.verifyPhoneOtpPublic = async (req, res, next) => {
   try {
     const { userId, otp } = req.body;
     if (!userId || !otp)
@@ -208,32 +186,29 @@ exports.verifyEmailOtp = async (req, res, next) => {
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    if (user.isEmailVerified)
-      return res.status(400).json({ message: "Email already verified" });
+    if (user.isPhoneVerified)
+      return res.status(400).json({ message: "Phone already verified" });
 
-    if (!user.emailOTP || !user.emailOTPExpires)
+    if (!user.phoneOTP || !user.phoneOTPExpires)
       return res.status(400).json({ message: "No OTP in progress" });
 
-    if (Date.now() > new Date(user.emailOTPExpires).getTime())
+    if (Date.now() > new Date(user.phoneOTPExpires).getTime())
       return res
         .status(400)
         .json({ message: "OTP expired, please request a new one" });
 
-    const ok = await bcrypt.compare(String(otp), user.emailOTP);
+    const ok = await bcrypt.compare(String(otp), user.phoneOTP);
     if (!ok) return res.status(400).json({ message: "Invalid OTP" });
 
-    user.isEmailVerified = true;
-    user.emailOTP = undefined;
-    user.emailOTPExpires = undefined;
+    user.isPhoneVerified = true;
+    user.phoneOTP = undefined;
+    user.phoneOTPExpires = undefined;
+    user.lastLogin = new Date();
     await user.save();
 
-    // Option A: return success only (then user can login manually)
-    // return res.json({ message: "Email verified successfully" });
-
-    // Option B (nicer UX): issue token immediately after verification
     const token = signToken(user);
     res.json({
-      message: "Email verified successfully",
+      message: "Phone verified successfully",
       token,
       user: {
         id: user._id,
@@ -241,7 +216,6 @@ exports.verifyEmailOtp = async (req, res, next) => {
         lastName: user.lastName,
         email: user.email,
         phone: user.phone,
-        isEmailVerified: user.isEmailVerified,
         isPhoneVerified: user.isPhoneVerified,
         kyc: user.kyc,
         walletBalance: user.walletBalance,
@@ -254,9 +228,9 @@ exports.verifyEmailOtp = async (req, res, next) => {
 };
 
 /**
- * Login
- * - Requires email to be verified
- * - Allows phone to be unverified (frontend will prompt to verify before transactions)
+ * POST /api/auth/login
+ * Body: { emailOrPhone, password }
+ * Blocks login if phone is NOT verified (frontend can push to OTP screen)
  */
 exports.login = async (req, res, next) => {
   try {
@@ -276,16 +250,15 @@ exports.login = async (req, res, next) => {
     const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) return res.status(400).json({ message: "Invalid credentials" });
 
-    if (!user.isEmailVerified) {
+    if (!user.isPhoneVerified) {
       return res.status(403).json({
-        code: "EMAIL_NOT_VERIFIED",
-        message: "Please verify your email to continue.",
+        code: "PHONE_NOT_VERIFIED",
+        message: "Please verify your phone number to continue.",
         userId: user._id,
-        email: user.email,
+        phone: maskPhone(user.phone),
       });
     }
 
-    // Optional: track last login
     user.lastLogin = new Date();
     await user.save();
 
@@ -298,7 +271,6 @@ exports.login = async (req, res, next) => {
         lastName: user.lastName,
         email: user.email,
         phone: user.phone,
-        isEmailVerified: user.isEmailVerified,
         isPhoneVerified: user.isPhoneVerified,
         kyc: user.kyc,
         walletBalance: user.walletBalance,
@@ -310,8 +282,11 @@ exports.login = async (req, res, next) => {
   }
 };
 
-// ----- Existing PIN + /me (unchanged) -----
-
+/**
+ * POST /api/pin/set  (moved to /routes/pinRoutes.js in your setup)
+ * Body: { pin }
+ * Auth required (protect)
+ */
 exports.setPin = async (req, res, next) => {
   try {
     const { pin } = req.body;
@@ -327,123 +302,10 @@ exports.setPin = async (req, res, next) => {
   }
 };
 
-// POST /api/auth/phone/send-otp
-exports.sendPhoneOtp = async (req, res, next) => {
-  try {
-    const user = req.user; // protect middleware sets this
-    if (!user.phone)
-      return res.status(400).json({ message: "No phone number on profile" });
-    if (user.isPhoneVerified)
-      return res.status(400).json({ message: "Phone already verified" });
-
-    // Throttle: 60s between sends
-    if (user.phoneOTPExpires) {
-      const lastSent = getLastSentFromExpiry(user.phoneOTPExpires);
-      if (
-        lastSent &&
-        Date.now() - lastSent.getTime() < RESEND_COOLDOWN_SEC * 1000
-      ) {
-        const wait = Math.ceil(
-          (RESEND_COOLDOWN_SEC * 1000 - (Date.now() - lastSent.getTime())) /
-            1000
-        );
-        return res.status(429).json({
-          message: `Please wait ${wait}s before requesting another code`,
-        });
-      }
-    }
-
-    const otp = generateOtp();
-    const hash = await bcrypt.hash(otp, 10);
-    user.phoneOTP = hash; // store HASH (best practice)
-    user.phoneOTPExpires = new Date(Date.now() + OTP_EXP_MIN * 60 * 1000);
-    await user.save();
-
-    await sendSmsOtp(user.phone, otp);
-
-    res.json({
-      message: "OTP sent successfully",
-      to: maskPhone(user.phone),
-      expiresInMinutes: OTP_EXP_MIN,
-    });
-  } catch (e) {
-    next(e);
-  }
-};
-
-// POST /api/auth/phone/resend-otp (same logic as send-otp, kept for clarity)
-exports.resendPhoneOtp = async (req, res, next) => {
-  try {
-    const user = req.user;
-    if (!user.phone)
-      return res.status(400).json({ message: "No phone number on profile" });
-    if (user.isPhoneVerified)
-      return res.status(400).json({ message: "Phone already verified" });
-
-    // Throttle: 60s between sends
-    if (user.phoneOTPExpires) {
-      const lastSent = getLastSentFromExpiry(user.phoneOTPExpires);
-      if (
-        lastSent &&
-        Date.now() - lastSent.getTime() < RESEND_COOLDOWN_SEC * 1000
-      ) {
-        const wait = Math.ceil(
-          (RESEND_COOLDOWN_SEC * 1000 - (Date.now() - lastSent.getTime())) /
-            1000
-        );
-        return res.status(429).json({
-          message: `Please wait ${wait}s before requesting another code`,
-        });
-      }
-    }
-
-    const otp = generateOtp();
-    const hash = await bcrypt.hash(otp, 10);
-    user.phoneOTP = hash;
-    user.phoneOTPExpires = new Date(Date.now() + OTP_EXP_MIN * 60 * 1000);
-    await user.save();
-
-    await sendSmsOtp(user.phone, otp);
-
-    res.json({
-      message: "OTP resent successfully",
-      to: maskPhone(user.phone),
-      expiresInMinutes: OTP_EXP_MIN,
-    });
-  } catch (e) {
-    next(e);
-  }
-};
-
-// POST /api/auth/phone/verify-otp  { otp: "123456" }
-exports.verifyPhoneOtp = async (req, res, next) => {
-  try {
-    const { otp } = req.body;
-    if (!otp) return res.status(400).json({ message: "OTP is required" });
-
-    const user = req.user;
-    if (!user.phoneOTP || !user.phoneOTPExpires)
-      return res.status(400).json({ message: "No OTP in progress" });
-
-    if (Date.now() > new Date(user.phoneOTPExpires).getTime())
-      return res
-        .status(400)
-        .json({ message: "OTP expired, please request a new one" });
-
-    const ok = await bcrypt.compare(String(otp), user.phoneOTP);
-    if (!ok) return res.status(400).json({ message: "Invalid OTP" });
-
-    user.isPhoneVerified = true;
-    user.phoneOTP = undefined;
-    user.phoneOTPExpires = undefined;
-    await user.save();
-
-    res.json({ message: "Phone verified successfully" });
-  } catch (e) {
-    next(e);
-  }
-};
-
+/**
+ * GET /api/auth/me
+ * Auth required (protect)
+ */
 exports.me = async (req, res, next) => {
   try {
     const u = req.user;
@@ -453,7 +315,6 @@ exports.me = async (req, res, next) => {
       lastName: u.lastName,
       email: u.email,
       phone: u.phone,
-      isEmailVerified: u.isEmailVerified,
       isPhoneVerified: u.isPhoneVerified,
       kyc: u.kyc,
       walletBalance: u.walletBalance,
