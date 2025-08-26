@@ -145,11 +145,9 @@ exports.resendPhoneOtpPublic = async (req, res, next) => {
           (RESEND_COOLDOWN_SEC * 1000 - (Date.now() - lastSent.getTime())) /
             1000
         );
-        return res
-          .status(429)
-          .json({
-            message: `Please wait ${wait}s before requesting another code`,
-          });
+        return res.status(429).json({
+          message: `Please wait ${wait}s before requesting another code`,
+        });
       }
     }
 
@@ -232,37 +230,52 @@ exports.verifyPhoneOtpPublic = async (req, res, next) => {
  * Body: { emailOrPhone, password }
  * Blocks login if phone is NOT verified (frontend can push to OTP screen)
  */
+
 exports.login = async (req, res, next) => {
   try {
     const errors = validationResult(req);
-    if (!errors.isEmpty())
+    if (!errors.isEmpty()) {
+      console.log("Validation errors:", errors.array());
       return res.status(400).json({ errors: errors.array() });
+    }
 
-    const { emailOrPhone, password } = req.body;
+    const { phone, pin } = req.body;
+    console.log("Login attempt:", { phone, pin });
 
-    const query = emailOrPhone?.includes("@")
-      ? { email: emailOrPhone.toLowerCase() }
-      : { phone: emailOrPhone };
-
-    const user = await User.findOne(query);
-    if (!user) return res.status(400).json({ message: "Invalid credentials" });
-
-    const ok = await bcrypt.compare(password, user.passwordHash);
-    if (!ok) return res.status(400).json({ message: "Invalid credentials" });
+    const user = await User.findOne({ phone });
+    if (!user) {
+      console.log("User not found for phone:", phone);
+      return res.status(400).json({ message: "Invalid credentials" });
+    }
 
     if (!user.isPhoneVerified) {
+      console.log("Phone not verified for user:", user._id);
       return res.status(403).json({
         code: "PHONE_NOT_VERIFIED",
         message: "Please verify your phone number to continue.",
         userId: user._id,
-        phone: maskPhone(user.phone),
+        phone: user.phone,
       });
+    }
+
+    if (!user.pinHash) {
+      console.log("PIN not set for user:", user._id);
+      return res
+        .status(400)
+        .json({ message: "PIN not set. Please set a PIN." });
+    }
+
+    const ok = await bcrypt.compare(pin, user.pinHash);
+    console.log("PIN comparison result:", ok);
+    if (!ok) {
+      return res.status(400).json({ message: "Invalid PIN" });
     }
 
     user.lastLogin = new Date();
     await user.save();
 
     const token = signToken(user);
+    console.log("Generated token:", token);
     res.json({
       token,
       user: {
@@ -278,6 +291,68 @@ exports.login = async (req, res, next) => {
       },
     });
   } catch (e) {
+    console.error("Login error:", e);
+    next(e);
+  }
+};
+
+// login with PIN only
+exports.loginPin = async (req, res, next) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      console.log("Validation errors:", errors.array());
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { pin } = req.body;
+    const user = req.user; // From protect middleware
+    console.log("PIN login attempt for user:", user._id);
+
+    if (!user.isPhoneVerified) {
+      console.log("Phone not verified for user:", user._id);
+      return res.status(403).json({
+        code: "PHONE_NOT_VERIFIED",
+        message: "Please verify your phone number to continue.",
+        userId: user._id,
+        phone: user.phone,
+      });
+    }
+
+    if (!user.pinHash) {
+      console.log("PIN not set for user:", user._id);
+      return res
+        .status(400)
+        .json({ message: "PIN not set. Please set a PIN." });
+    }
+
+    const ok = await bcrypt.compare(pin, user.pinHash);
+    console.log("PIN comparison result:", ok);
+    if (!ok) {
+      return res.status(400).json({ message: "Invalid PIN" });
+    }
+
+    user.lastLogin = new Date();
+    await user.save();
+
+    const token = signToken(user);
+    console.log("Generated token:", token);
+    res.json({
+      token,
+      user: {
+        id: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        phone: user.phone,
+        isPhoneVerified: user.isPhoneVerified,
+        kyc: user.kyc,
+        walletBalance: user.walletBalance,
+        roles: user.roles,
+      },
+    });
+  } catch (e) {
+    console.error("PIN login error:", e);
     next(e);
   }
 };
@@ -287,16 +362,31 @@ exports.login = async (req, res, next) => {
  * Body: { pin }
  * Auth required (protect)
  */
+
 exports.setPin = async (req, res, next) => {
   try {
-    const { pin } = req.body;
-    if (!pin || !/^\d{4,6}$/.test(pin)) {
-      return res.status(400).json({ message: "PIN must be 4–6 digits" });
+    const { userId, pin } = req.body;
+    if (!userId || !pin) {
+      return res.status(400).json({ message: "userId and pin are required" });
     }
-    const pinHash = await bcrypt.hash(String(pin), 12);
-    req.user.pinHash = pinHash;
-    await req.user.save();
-    res.json({ message: "Transaction PIN set successfully" });
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    if (!user.isPhoneVerified) {
+      return res.status(400).json({ message: "Phone not verified" });
+    }
+
+    if (user.pinHash) {
+      return res.status(400).json({ message: "PIN already set" });
+    }
+
+    user.pinHash = await bcrypt.hash(pin, 12);
+    await user.save();
+
+    res.json({ message: "PIN set successfully" });
   } catch (e) {
     next(e);
   }

@@ -4,10 +4,9 @@ const { body } = require("express-validator");
 const {
   register,
   login,
-
-  // setPin,
+  setPin,
   me,
-  // sendPhoneOtp,
+  loginPin,
   resendPhoneOtpPublic,
   verifyPhoneOtpPublic,
 } = require("../controllers/authController");
@@ -27,20 +26,52 @@ router.post(
   register
 );
 
+// Login (no protect middleware)
 router.post(
   "/login",
-  [body("emailOrPhone").notEmpty(), body("password").notEmpty()],
+  [
+    body("phone").notEmpty().withMessage("Phone number is required"),
+    body("pin")
+      .isLength({ min: 6, max: 6 })
+      .matches(/^\d{6}$/)
+      .withMessage("PIN must be exactly 6 digits"),
+  ],
   login
 );
 
+// PIN-only login (protected)
+router.post(
+  "/login-pin",
+  protect,
+  [
+    body("pin")
+      .isLength({ min: 6, max: 6 })
+      .matches(/^\d{6}$/)
+      .withMessage("PIN must be exactly 6 digits"),
+  ],
+  loginPin
+);
+
 // ---- Phone OTP (post-login) ----
-// router.post("/phone/send-otp", protect, sendPhoneOtp);
-router.post("/phone/resend-otp", protect, resendPhoneOtpPublic);
+
+router.post("/phone/resend-otp", resendPhoneOtpPublic);
+
 router.post(
   "/phone/verify-otp",
-  protect,
   [body("otp").isLength({ min: 6, max: 6 })],
   verifyPhoneOtpPublic
+);
+
+// Set PIN (protected)
+router.post(
+  "/set-Pin",
+  protect,
+  [
+    body("pin")
+      .isLength({ min: 6, max: 6 })
+      .matches(/^\d{6}$/),
+  ],
+  setPin
 );
 
 // Authenticated profile
