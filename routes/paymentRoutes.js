@@ -6,7 +6,8 @@ const {
   makePayment,
   verifyTransaction,
   getDataPlans,
-} = require("../controllers/paymentController"); // Adjust path to your controller
+  verfyTransactionPin,
+} = require("../controllers/paymentController");
 
 // Buy Airtime
 router.post("/buy-airtime", protect, verifyPin, async (req, res, next) => {
@@ -36,19 +37,20 @@ router.post("/buy-airtime", protect, verifyPin, async (req, res, next) => {
 // Get Data Plans for a network
 router.get("/data-plans", getDataPlans);
 
-// router.get("/data-plans", async (req, res, next) => {
-//   try {
-//     const { network } = req.query;
-//     if (!network) {
-//       return res
-//         .status(400)
-//         .json({ success: false, error: "Network is required" });
-//     }
-//     await getDataPlans(req, res, network);
-//   } catch (err) {
-//     next(err);
-//   }
-// });
+// Verify Transaction Pin
+router.post(
+  "/verify-transaction-pin",
+  protect,
+  [
+    body("pin")
+      .notEmpty()
+      .withMessage("Transaction PIN is required")
+      .isLength({ min: 4, max: 4 })
+      .matches(/^\d{4}$/)
+      .withMessage("Transaction PIN must be exactly 4 digits"),
+  ],
+  verfyTransactionPin
+);
 
 // Buy Data
 router.post("/buy-data", protect, verifyPin, async (req, res, next) => {

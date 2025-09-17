@@ -116,6 +116,26 @@ const getDataPlans = async (req, res) => {
   }
 };
 
+exports.verfyTransactionPin = async (req, res) => {
+  try {
+    const { pin } = req.body;
+    const userId = req.user.id; // From JWT middleware
+    const user = await User.findById(userId);
+    if (!user || !user.transactionPinHash) {
+      return res.status(403).json({ message: "Transaction PIN not set" });
+    }
+    const isMatch = await bcrypt.compare(String(pin), user.transactionPinHash);
+    if (!isMatch) {
+      return res.status(403).json({ message: "Invalid Transaction PIN" });
+    }
+    res
+      .status(200)
+      .json({ success: true, message: "Transaction PIN verified" });
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
 const verifyTransaction = async (req, res, { reference }) => {
   try {
     const response = await vtpassApi.get(`/merchant-verify/${reference}`);

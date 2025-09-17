@@ -392,10 +392,86 @@ exports.setPin = async (req, res, next) => {
   }
 };
 
+// transaction PIN verification middleware
+
+exports.setTransactionPin = async (req, res) => {
+  const { pin } = req.body;
+  const userId = req.user.id;
+  if (!pin || !/^\d{4}$/.test(pin)) {
+    return res
+      .status(400)
+      .json({ message: "Transaction PIN must be 4 digits" });
+  }
+  const user = await User.findById(userId);
+  if (!user) {
+    return res.status(404).json({ message: "User not found" });
+  }
+  user.transactionPinHash = pin; // Hashed by pre-save hook
+  await user.save();
+  res
+    .status(200)
+    .json({ success: true, message: "Transaction PIN set successfully" });
+};
+
+exports.resetTransactionPin = async (req, res) => {
+  try {
+    const { pin, otp } = req.body; // Validated: pin (4 digits), otp (6 digits)
+    const userId = req.user.id;
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    if (
+      !user.phoneOTP ||
+      user.phoneOTP !== otp ||
+      user.phoneOTPExpires < Date.now()
+    ) {
+      return res.status(403).json({ message: "Invalid or expired OTP" });
+    }
+    user.transactionPinHash = pin; // Hashed by pre-save hook
+    user.phoneOTP = null;
+    user.phoneOTPExpires = null;
+    await user.save();
+    res
+      .status(200)
+      .json({ success: true, message: "Transaction PIN reset successfully" });
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+exports.resetLoginPin = async (req, res) => {
+  try {
+    const { pin, otp } = req.body; // Validated: pin (6 digits), otp (6 digits)
+    const userId = req.user.id;
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    if (
+      !user.phoneOTP ||
+      user.phoneOTP !== otp ||
+      user.phoneOTPExpires < Date.now()
+    ) {
+      return res.status(403).json({ message: "Invalid or expired OTP" });
+    }
+    user.pinHash = pin; // Hashed by pre-save hook
+    user.phoneOTP = null;
+    user.phoneOTPExpires = null;
+    await user.save();
+    res
+      .status(200)
+      .json({ success: true, message: "Login PIN reset successfully" });
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
 /**
  * GET /api/auth/me
  * Auth required (protect)
  */
+
 exports.me = async (req, res, next) => {
   try {
     const u = req.user;
@@ -409,6 +485,7 @@ exports.me = async (req, res, next) => {
       kyc: u.kyc,
       walletBalance: u.walletBalance,
       roles: u.roles,
+      transactionPinSet: !!u.transactionPinHash, // Add flag to indicate if transaction PIN is set
     });
   } catch (e) {
     next(e);
