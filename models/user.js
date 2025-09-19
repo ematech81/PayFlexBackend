@@ -1,65 +1,55 @@
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 
-const userSchema = new mongoose.Schema(
-  {
-    firstName: { type: String, trim: true },
-    lastName: { type: String, trim: true },
-    email: {
-      type: String,
-      unique: true,
-      sparse: true,
-      lowercase: true,
-      trim: true,
-    },
-    phone: {
-      type: String,
-      unique: true,
-      sparse: true,
-      trim: true,
-      required: true,
-    },
-    passwordHash: { type: String, required: true }, // bcrypt hash for password
-    pinHash: { type: String, default: null }, // bcrypt hash for 6-digit login PIN
-    transactionPinHash: { type: String, default: null }, // bcrypt hash for 4-digit transaction PIN
-    isEmailVerified: { type: Boolean, default: false },
-    emailOTP: { type: String },
-    emailOTPExpires: { type: Date },
-    isPhoneVerified: { type: Boolean, default: false },
-    phoneOTP: { type: String },
-    phoneOTPExpires: { type: Date },
-    walletBalance: { type: Number, default: 0 },
-    kyc: {
-      status: {
-        type: String,
-        enum: ["unverified", "pending", "verified", "rejected"],
-        default: "unverified",
-      },
-      bvn: { type: String, default: null },
-      bvnVerified: { type: Boolean, default: false },
-      idType: {
-        type: String,
-        enum: ["NIN", "DRIVERS_LICENSE", "PASSPORT", "VOTER_ID", null],
-        default: null,
-      },
-      idImageUrl: { type: String, default: null },
-      idVerified: { type: Boolean, default: false },
-      notes: { type: String, default: null },
-    },
-    roles: { type: [String], default: ["user"] },
-  },
-  { timestamps: true }
-);
+const userSchema = new mongoose.Schema({
+  firstName: { type: String, required: true },
+  lastName: { type: String, required: true },
+  email: { type: String, required: true, unique: true },
+  phone: { type: String, required: true, unique: true },
+  passwordHash: { type: String },
+  pinHash: { type: String }, // 6-digit login PIN
+  transactionPinHash: { type: String }, // 4-digit transaction PIN
+  isPhoneVerified: { type: Boolean, default: false },
+  phoneOTP: { type: String },
+  phoneOTPExpires: { type: Date },
+  kyc: { type: String, default: "pending" },
+  walletBalance: { type: Number, default: 0 },
+  roles: [{ type: String }],
+});
 
-// Hash transaction PIN and login PIN before saving
+// Hash password, login PIN, and transaction PIN before saving
 userSchema.pre("save", async function (next) {
-  if (this.isModified("transactionPinHash") && this.transactionPinHash) {
-    this.transactionPinHash = await bcrypt.hash(this.transactionPinHash, 10);
+  try {
+    if (this.isModified("passwordHash") && this.passwordHash) {
+      console.log("Hashing passwordHash for phone:", this.phone);
+      this.passwordHash = await bcrypt.hash(this.passwordHash, 10);
+      console.log("Hashed passwordHash:", this.passwordHash);
+    }
+    if (this.isModified("pinHash") && this.pinHash) {
+      console.log(
+        "Hashing pinHash for phone:",
+        this.phone,
+        "PIN:",
+        this.pinHash
+      );
+      this.pinHash = await bcrypt.hash(this.pinHash, 10);
+      console.log("Hashed pinHash:", this.pinHash);
+    }
+    if (this.isModified("transactionPinHash") && this.transactionPinHash) {
+      console.log(
+        "Hashing transactionPinHash for phone:",
+        this.phone,
+        "PIN:",
+        this.transactionPinHash
+      );
+      this.transactionPinHash = await bcrypt.hash(this.transactionPinHash, 10);
+      console.log("Hashed transactionPinHash:", this.transactionPinHash);
+    }
+    next();
+  } catch (error) {
+    console.error("Error in pre-save hook:", error.message);
+    next(error);
   }
-  if (this.isModified("pinHash") && this.pinHash) {
-    this.pinHash = await bcrypt.hash(this.pinHash, 10);
-  }
-  next();
 });
 
 module.exports = mongoose.model("User", userSchema);

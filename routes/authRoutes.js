@@ -1,5 +1,6 @@
 const express = require("express");
 const { body } = require("express-validator");
+const verifyPin = require("../middleware/verifyPin");
 
 const {
   register,
@@ -12,6 +13,7 @@ const {
   setTransactionPin,
   resetTransactionPin,
   resetLoginPin,
+  verifyLoginPin,
 } = require("../controllers/authController");
 const { protect } = require("../middleware/auth");
 
@@ -47,17 +49,33 @@ router.post(
   login
 );
 
-// PIN-only login (protected)
+// set login PIN (post-login)
 router.post(
-  "/login-pin",
+  "/set-pin",
   protect,
   [
+    body("userId").notEmpty().withMessage("userId is required"),
     body("pin")
       .isLength({ min: 6, max: 6 })
       .matches(/^\d{6}$/)
       .withMessage("PIN must be exactly 6 digits"),
   ],
-  loginPin
+  setPin
+);
+
+// Verify Login PIN (no protect middleware)
+router.post(
+  "/verify-login-pin",
+  [
+    body("phone").notEmpty().withMessage("Phone number is required"),
+    body("pin")
+      .notEmpty()
+      .withMessage("PIN is required")
+      .isLength({ min: 6, max: 6 })
+      .matches(/^\d{6}$/)
+      .withMessage("PIN must be exactly 6 digits"),
+  ],
+  verifyLoginPin
 );
 
 // Phone OTP (post-login)
@@ -71,19 +89,6 @@ router.post(
       .withMessage("OTP must be 6 digits"),
   ],
   verifyPhoneOtpPublic
-);
-
-// Set PIN (protected)
-router.post(
-  "/set-Pin",
-  protect,
-  [
-    body("pin")
-      .isLength({ min: 6, max: 6 })
-      .matches(/^\d{6}$/)
-      .withMessage("PIN must be exactly 6 digits"),
-  ],
-  setPin
 );
 
 // Set Transaction PIN (protected)

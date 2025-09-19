@@ -8,6 +8,7 @@ const {
   getDataPlans,
   verfyTransactionPin,
 } = require("../controllers/paymentController");
+const { body } = require("express-validator");
 
 // Buy Airtime
 router.post("/buy-airtime", protect, verifyPin, async (req, res, next) => {

@@ -1,5 +1,6 @@
 const axios = require("axios");
 const Transaction = require("../models/transaction");
+const User = require("../models/user");
 
 // Axios instance for VTpass API
 const vtpassApi = axios.create({
@@ -116,7 +117,7 @@ const getDataPlans = async (req, res) => {
   }
 };
 
-exports.verfyTransactionPin = async (req, res) => {
+const verfyTransactionPin = async (req, res) => {
   try {
     const { pin } = req.body;
     const userId = req.user.id; // From JWT middleware
@@ -168,4 +169,4 @@ const verifyTransaction = async (req, res, { reference }) => {
   }
 };
 
-module.exports = { makePayment, verifyTransaction, getDataPlans };
+module.exports = { makePayment, verfyTransactionPin, getDataPlans };
