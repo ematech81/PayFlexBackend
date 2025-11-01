@@ -93,14 +93,14 @@ exports.register = async (req, res, next) => {
       email: email?.toLowerCase(),
       phone,
       passwordHash,
-      isEmailVerified: false, // optional; kept for model compatibility
+      isEmailVerified: false,
       isPhoneVerified: false,
     });
 
-    // Generate + hash phone OTP
-    const otp = generateOtp();
-    user.phoneOTP = await bcrypt.hash(otp, 10);
-    user.phoneOTPExpires = new Date(Date.now() + OTP_EXP_MIN * 60 * 1000);
+    // Generate and send OTP
+    const otp = generateOTP();
+    user.phoneOTP = await bcrypt.hash(String(otp), 10);
+    user.phoneOTPExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
     await user.save();
 
     // Send SMS
@@ -177,12 +177,13 @@ exports.resendPhoneOtpPublic = async (req, res, next) => {
  */
 exports.verifyPhoneOtpPublic = async (req, res, next) => {
   try {
-    const { userId, otp } = req.body;
-    if (!userId || !otp)
-      return res.status(400).json({ message: "userId and otp are required" });
+    const { phone, otp } = req.body;  // Changed from userId
+    if (!phone || !otp)
+      return res.status(400).json({ message: "phone and otp are required" });
 
-    const user = await User.findById(userId);
+    const user = await User.findOne({ phone });  // Changed from findById
     if (!user) return res.status(404).json({ message: "User not found" });
+
 
     if (user.isPhoneVerified)
       return res.status(400).json({ message: "Phone already verified" });
@@ -227,36 +228,38 @@ exports.verifyPhoneOtpPublic = async (req, res, next) => {
 
 exports.login = async (req, res, next) => {
   try {
-    const { phone, pin } = req.body;
-    console.log("Login attempt:", { phone, pin });
+    const { phone, pin, deviceId } = req.body;
+
+    // Validate input
     if (!phone || !pin || !/^\d{6}$/.test(pin)) {
       return res
         .status(400)
-        .json({ message: "Phone number and 6-digit PIN are required" });
+        .json({ success: false, message: "Phone number and 6-digit PIN are required" });
     }
 
-    const user = await User.findOne({ phone });
+    if (!deviceId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Device ID is required" });
+    }
+
+    const user = await User.findOne({ phone }).select('+pinHash +devices');
     if (!user || !user.pinHash) {
-      console.log("User or pinHash not found for phone:", phone);
       return res
         .status(401)
-        .json({ message: "Invalid phone number or PIN not set" });
+        .json({ success: false, message: "Invalid phone number or PIN not set" });
     }
 
-    console.log(
-      "Comparing PIN for phone:",
-      phone,
-      "Stored pinHash:",
-      user.pinHash
-    );
+    // Verify PIN
     const isMatch = await bcrypt.compare(String(pin), user.pinHash);
-    console.log("PIN match result:", isMatch);
     if (!isMatch) {
-      return res.status(401).json({ message: "Invalid PIN" });
+      return res.status(401).json({ success: false, message: "Invalid PIN" });
     }
 
+    // Check phone verification
     if (!user.isPhoneVerified) {
       return res.status(403).json({
+        success: false,
         message: "Phone number not verified",
         code: "PHONE_NOT_VERIFIED",
         userId: user._id,
@@ -265,15 +268,36 @@ exports.login = async (req, res, next) => {
       });
     }
 
+    // Device Detection Logic
+    const isNewDevice = !user.devices?.includes(deviceId);
+
+    if (isNewDevice) {
+      // Add device to user's known devices
+      if (!user.devices) user.devices = [];
+      user.devices.push(deviceId);
+      await user.save();
+
+      return res.status(200).json({
+        success: true,
+        isNewDevice: true,
+        message: "New device detected. Please verify with OTP.",
+        userId: user._id,
+        phone: user.phone,
+      });
+    }
+
+    // Known device → full login
     user.lastLogin = new Date();
     await user.save();
 
     const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
       expiresIn: "30d",
     });
+
     res.status(200).json({
       success: true,
       token,
+      isNewDevice: false,
       user: {
         id: user._id,
         firstName: user.firstName,
@@ -285,6 +309,7 @@ exports.login = async (req, res, next) => {
         walletBalance: user.walletBalance,
         roles: user.roles,
         transactionPinSet: !!user.transactionPinHash,
+        requirePinOnOpen: user.requirePinOnOpen || true,
       },
     });
   } catch (error) {
@@ -371,157 +396,6 @@ exports.setPin = async (req, res, next) => {
   }
 };
 
-// exports.login = async (req, res, next) => {
-//   try {
-//     const { phone, pin } = req.body;
-//     if (!phone || !pin || !/^\d{6}$/.test(pin)) {
-//       return res
-//         .status(400)
-//         .json({ message: "Phone number and 6-digit PIN are required" });
-//     }
-
-//     const user = await User.findOne({ phone });
-//     if (!user || !user.pinHash) {
-//       return res
-//         .status(401)
-//         .json({ message: "Invalid phone number or PIN not set" });
-//     }
-
-//     const isMatch = await bcrypt.compare(String(pin), user.pinHash);
-//     if (!isMatch) {
-//       return res.status(401).json({ message: "Invalid PIN" });
-//     }
-
-//     if (!user.isPhoneVerified) {
-//       return res.status(403).json({
-//         message: "Phone number not verified",
-//         code: "PHONE_NOT_VERIFIED",
-//         userId: user._id,
-//         phone: user.phone,
-//         user: { email: user.email },
-//       });
-//     }
-
-//     user.lastLogin = new Date();
-//     await user.save();
-
-//     const token = signToken(user);
-//     res.status(200).json({
-//       success: true,
-//       token,
-//       user: {
-//         id: user._id,
-//         firstName: user.firstName,
-//         lastName: user.lastName,
-//         email: user.email,
-//         phone: user.phone,
-//         isPhoneVerified: user.isPhoneVerified,
-//         kyc: user.kyc,
-//         walletBalance: user.walletBalance,
-//         roles: user.roles,
-//         transactionPinSet: !!user.transactionPinHash,
-//       },
-//     });
-//   } catch (error) {
-//     next(error);
-//   }
-// };
-
-// // login with PIN only
-// exports.loginPin = async (req, res, next) => {
-//   try {
-//     const errors = validationResult(req);
-//     if (!errors.isEmpty()) {
-//       console.log("Validation errors:", errors.array());
-//       return res.status(400).json({ errors: errors.array() });
-//     }
-
-//     const { pin } = req.body;
-//     const user = req.user; // From protect middleware
-//     console.log("PIN login attempt for user:", user._id);
-
-//     if (!user.isPhoneVerified) {
-//       console.log("Phone not verified for user:", user._id);
-//       return res.status(403).json({
-//         code: "PHONE_NOT_VERIFIED",
-//         message: "Please verify your phone number to continue.",
-//         userId: user._id,
-//         phone: user.phone,
-//       });
-//     }
-
-//     if (!user.pinHash) {
-//       console.log("PIN not set for user:", user._id);
-//       return res
-//         .status(400)
-//         .json({ message: "PIN not set. Please set a PIN." });
-//     }
-
-//     const ok = await bcrypt.compare(pin, user.pinHash);
-//     console.log("PIN comparison result:", ok);
-//     if (!ok) {
-//       return res.status(400).json({ message: "Invalid PIN" });
-//     }
-
-//     user.lastLogin = new Date();
-//     await user.save();
-
-//     const token = signToken(user);
-//     console.log("Generated token:", token);
-//     res.json({
-//       token,
-//       user: {
-//         id: user._id,
-//         firstName: user.firstName,
-//         lastName: user.lastName,
-//         email: user.email,
-//         phone: user.phone,
-//         isPhoneVerified: user.isPhoneVerified,
-//         kyc: user.kyc,
-//         walletBalance: user.walletBalance,
-//         roles: user.roles,
-//       },
-//     });
-//   } catch (e) {
-//     console.error("PIN login error:", e);
-//     next(e);
-//   }
-// };
-
-// /**
-//  * POST /api/pin/set  (moved to /routes/pinRoutes.js in your setup)
-//  * Body: { pin }
-//  * Auth required (protect)
-//  */
-
-// exports.setPin = async (req, res, next) => {
-//   try {
-//     const { userId, pin } = req.body;
-//     if (!userId || !pin) {
-//       return res.status(400).json({ message: "userId and pin are required" });
-//     }
-
-//     const user = await User.findById(userId);
-//     if (!user) {
-//       return res.status(404).json({ message: "User not found" });
-//     }
-
-//     if (!user.isPhoneVerified) {
-//       return res.status(400).json({ message: "Phone not verified" });
-//     }
-
-//     if (user.pinHash) {
-//       return res.status(400).json({ message: "PIN already set" });
-//     }
-
-//     user.pinHash = await bcrypt.hash(pin, 12);
-//     await user.save();
-
-//     res.json({ message: "PIN set successfully" });
-//   } catch (e) {
-//     next(e);
-//   }
-// };
 
 // transaction PIN verification middleware
 
@@ -542,6 +416,81 @@ exports.setTransactionPin = async (req, res) => {
   res
     .status(200)
     .json({ success: true, message: "Transaction PIN set successfully" });
+};
+
+// controllers/authController.js
+
+// 1. Forgot Login PIN (public)
+exports.forgotLoginPin = async (req, res) => {
+  const { phone } = req.body;
+  const user = await User.findOne({ phone });
+  if (!user) return res.status(404).json({ success: false, message: "User not found" });
+
+  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  user.resetCode = code;
+  user.resetCodeExpires = Date.now() + 10 * 60 * 1000; // 10 min
+  await user.save();
+
+  // Send via SMS
+  await sendSMS(phone, `PayFlex PIN Reset Code: ${code}`);
+  if (user.email) await sendEmail(user.email, "PIN Reset", `Your code: ${code}`);
+
+  res.json({ success: true, message: "Reset code sent" });
+};
+
+// 2. Verify Reset Code
+exports.verifyResetCode = async (req, res) => {
+  const { phone, code } = req.body;
+  const user = await User.findOne({
+    phone,
+    resetCode: code,
+    resetCodeExpires: { $gt: Date.now() },
+  });
+
+  if (!user) {
+    return res.status(400).json({ success: false, message: "Invalid or expired code" });
+  }
+
+  user.resetCode = undefined;
+  user.resetCodeExpires = undefined;
+  await user.save();
+
+  const resetToken = jwt.sign({ id: user._id, type: "pin_reset" }, process.env.JWT_SECRET, {
+    expiresIn: "15m",
+  });
+
+  res.json({ success: true, resetToken });
+};
+
+// 3. Set PIN after reset (uses resetToken)
+exports.setPinAfterReset = async (req, res) => {
+  const { resetToken, pin } = req.body;
+
+  let decoded;
+  try {
+    decoded = jwt.verify(resetToken, process.env.JWT_SECRET);
+    if (decoded.type !== "pin_reset") throw new Error();
+  } catch (err) {
+    return res.status(401).json({ success: false, message: "Invalid reset token" });
+  }
+
+  const user = await User.findById(decoded.id);
+  if (!user) return res.status(404).json({ success: false, message: "User not found" });
+
+  const salt = await bcrypt.genSalt(10);
+  user.loginPin = await bcrypt.hash(pin, salt);
+  user.requirePinOnOpen = true;
+  await user.save();
+
+  res.json({ success: true, message: "PIN updated successfully" });
+};
+
+// 4. Update Require PIN on Open
+exports.updateRequirePinOnOpen = async (req, res) => {
+  const { requirePin } = req.body;
+  req.user.requirePinOnOpen = requirePin;
+  await req.user.save();
+  res.json({ success: true });
 };
 
 exports.resetTransactionPin = async (req, res) => {
