@@ -75,6 +75,10 @@ router.post("/buy-airtime", protect, async (req, res, next) => {
 
     // ✅ Skip balance check in sandbox
     const isSandbox = process.env.VTPASS_ENV === 'sandbox';
+
+    console.log("VTPASS_ENV:", process.env.VTPASS_ENV);
+console.log("Is Sandbox:", process.env.VTPASS_ENV === 'sandbox');
+
     
     if (!isSandbox && user.walletBalance < amount) {
       return res.status(400).json({

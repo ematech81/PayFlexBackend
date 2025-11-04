@@ -1,9 +1,12 @@
-// routes/auth.js
+
+
 const express = require("express");
-const { body } = require("express-validator");
+const { body, validationResult } = require("express-validator");
 const {
   register,
   login,
+  verifyDeviceOtp,
+  resendDeviceOtp,
   setPin,
   me,
   verifyLoginPin,
@@ -19,6 +22,8 @@ const {
   setPinAfterReset,
 } = require("../controllers/authController");
 const { protect } = require("../middleware/auth");
+const validate  = require("../middleware/validate");
+
 
 const router = express.Router();
 
@@ -26,32 +31,179 @@ const router = express.Router();
    PUBLIC ROUTES
    ======================================== */
 
-// 1. Register
+   
+   // 1. Register
+   router.post(
+     "/register",
+     [
+       body("firstName")
+         .trim()
+         .notEmpty()
+         .withMessage("First name is required")
+         .isLength({ min: 2, max: 50 })
+         .withMessage("First name must be between 2 and 50 characters"),
+       
+       body("lastName")
+         .trim()
+         .notEmpty()
+         .withMessage("Last name is required")
+         .isLength({ min: 2, max: 50 })
+         .withMessage("Last name must be between 2 and 50 characters"),
+       
+       body("phone")
+         .trim()
+         .notEmpty()
+         .withMessage("Phone number is required")
+         .matches(/^(\+?234|0)[789]\d{9}$/)
+         .withMessage("Please enter a valid Nigerian phone number (e.g., 08012345678 or +2348012345678)"),
+       
+       body("password")
+         .notEmpty()
+         .withMessage("Password is required")
+         .isLength({ min: 6 })
+         .withMessage("Password must be at least 6 characters"),
+       
+       body("email")
+         .optional({ checkFalsy: true })
+         .trim()
+         .isEmail()
+         .withMessage("Please enter a valid email address")
+         .normalizeEmail(),
+     ],
+     validate,
+     register
+   );
+
+
+// 4. Phone OTP
+// router.post("/phone/resend-otp", resendPhoneOtpPublic);
+
+// 2. Verify Phone OTP (after registration)
 router.post(
-  "/register",
+  "/phone/verify-otp",
   [
-    body("firstName").notEmpty().withMessage("First name is required"),
-    body("lastName").notEmpty().withMessage("Last name is required"),
-    body("phone").isMobilePhone().withMessage("Valid phone number is required"),
-    body("password").isLength({ min: 6 }).withMessage("Password must be at least 6 characters"),
-    body("email").optional().isEmail().withMessage("Valid email is required"),
+    body("phone")
+      .trim()
+      .notEmpty()
+      .withMessage("Phone number is required")
+      .matches(/^(\+?234|0)[789]\d{9}$/)
+      .withMessage("Please enter a valid Nigerian phone number"),
+    
+    body("otp")
+      .trim()
+      .notEmpty()
+      .withMessage("OTP is required")
+      .matches(/^\d{6}$/)
+      .withMessage("OTP must be exactly 6 digits"),
+    
+    body("deviceId")
+      .optional()
+      .isString()
+      .trim()
+      .withMessage("Device ID must be a string"),
   ],
-  register
+  validate,
+  verifyPhoneOtpPublic
 );
 
-// 2. Login (phone + 6-digit PIN)
+
+
+router.post(
+  "/phone/resend-otp",
+  [
+    body("phone")
+      .trim()
+      .notEmpty()
+      .withMessage("Phone number is required")
+      .matches(/^(\+?234|0)[789]\d{9}$/)
+      .withMessage("Please enter a valid Nigerian phone number"),
+    
+    body("otp")
+      .trim()
+      .notEmpty()
+      .withMessage("OTP is required")
+      .matches(/^\d{6}$/)
+      .withMessage("OTP must be exactly 6 digits"),
+  ],
+  validate,
+  resendPhoneOtpPublic
+);
+
+
+
+// LOGIN & DEVICE VERIFICATION ROUTES
+
+// 4. Login (with device detection)
 router.post(
   "/login",
   [
-    body("phone").notEmpty().withMessage("Phone number is required"),
+    body("phone")
+      .trim()
+      .notEmpty()
+      .withMessage("Phone number is required")
+      .matches(/^(\+?234|0)[789]\d{9}$/)
+      .withMessage("Please enter a valid Nigerian phone number"),
+    
     body("pin")
-      .isLength({ min: 6, max: 6 })
+      .trim()
+      .notEmpty()
+      .withMessage("PIN is required")
       .matches(/^\d{6}$/)
       .withMessage("PIN must be exactly 6 digits"),
-    body("deviceId").notEmpty().withMessage("Device ID is required"),
+    
+    body("deviceId")
+      .trim()
+      .isString()
+      .notEmpty()
+      .withMessage("Device ID is required"),
   ],
+  validate,
   login
 );
+
+// 5. Verify Device OTP (for new devices)
+router.post(
+  "/verify-device-otp",
+  [
+    body("phone")
+      .trim()
+      .notEmpty()
+      .withMessage("Phone number is required")
+      .matches(/^(\+?234|0)[789]\d{9}$/)
+      .withMessage("Please enter a valid Nigerian phone number"),
+    
+    body("otp")
+      .trim()
+      .notEmpty()
+      .withMessage("OTP is required")
+      .matches(/^\d{6}$/)
+      .withMessage("OTP must be exactly 6 digits"),
+    
+    body("deviceId")
+      .trim()
+      .notEmpty()
+      .withMessage("Device ID is required"),
+  ],
+  validate,
+  verifyDeviceOtp
+);
+
+// 6. Resend Device OTP
+router.post(
+  "/resend-device-otp",
+  [
+    body("phone")
+      .trim()
+      .notEmpty()
+      .withMessage("Phone number is required")
+      .matches(/^(\+?234|0)[789]\d{9}$/)
+      .withMessage("Please enter a valid Nigerian phone number"),
+  ],
+  validate,
+  resendDeviceOtp
+);
+
+
 
 // 3. Verify Login PIN (public – used before full login)
 router.post(
@@ -63,28 +215,18 @@ router.post(
       .matches(/^\d{6}$/)
       .withMessage("PIN must be exactly 6 digits"),
   ],
+  validate,
   verifyLoginPin
 );
 
-// 4. Phone OTP
-router.post("/phone/resend-otp", resendPhoneOtpPublic);
-router.post(
-  "/phone/verify-otp",
-  [
-    body("phone").notEmpty().withMessage("Phone is required"),
-    body("otp").isLength({ min: 6, max: 6 }).withMessage("OTP must be 6 digits"),
-  ],
-  verifyPhoneOtpPublic
-);
 
-/* ========================================
-   FORGOT PIN FLOW (PUBLIC)
-   ======================================== */
 
+  // FORGOT PIN FLOW (PUBLIC)
 // 5. Trigger Forgot PIN → sends OTP to phone + email
 router.post(
   "/forgot-pin",
   [body("phone").notEmpty().withMessage("Phone is required")],
+  validate,
   forgotLoginPin
 );
 
@@ -95,6 +237,7 @@ router.post(
     body("phone").notEmpty(),
     body("code").isLength({ min: 6, max: 6 }).withMessage("Code must be 6 digits"),
   ],
+  validate,
   verifyResetCode
 );
 
@@ -108,6 +251,7 @@ router.post(
       .matches(/^\d{6}$/)
       .withMessage("PIN must be 6 digits"),
   ],
+  validate,
   setPinAfterReset // new controller
 );
 
@@ -179,4 +323,4 @@ router.post(
 // 12. Me
 router.get("/me", protect, me);
 
-module.exports = router;
+module.exports = router; 
