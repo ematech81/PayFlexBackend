@@ -1001,25 +1001,122 @@ exports.verifyLoginPin = async (req, res) => {
 // transaction PIN verification middleware
 
 exports.setTransactionPin = async (req, res) => {
-  const { pin } = req.body;
-  const userId = req.user.id;
-  if (!pin || !/^\d{4}$/.test(pin)) {
-    return res
-      .status(400)
-      .json({ message: "Transaction PIN must be 4 digits" });
+  try {
+    const { pin } = req.body;
+    const userId = req.user.id || req.user._id;
+
+    // Validate PIN format
+    if (!pin || !/^\d{4}$/.test(pin)) {
+      return res.status(400).json({ 
+        success: false,
+        message: "Transaction PIN must be exactly 4 digits" 
+      });
+    }
+
+    // Find user
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ 
+        success: false,
+        message: "User not found" 
+      });
+    }
+
+    // Optional: Check if PIN already exists
+    if (user.transactionPinHash) {
+      return res.status(400).json({
+        success: false,
+        message: "Transaction PIN already set. Please use reset PIN instead."
+      });
+    }
+
+    console.log('🔐 Before setting PIN - user:', {
+      userId: user._id,
+      hasTransactionPinHash: !!user.transactionPinHash
+    });
+
+    // Set PIN (will be hashed by pre-save hook)
+    user.transactionPinHash = pin;
+    await user.save();
+
+    // ✅ FIX: Verify the PIN was actually saved by querying with explicit inclusion
+    const updatedUser = await User.findById(userId).select('+transactionPinHash');
+    console.log('🔐 After setting PIN - user:', {
+      userId: updatedUser._id,
+      hasTransactionPinHash: !!updatedUser.transactionPinHash,
+      transactionPinHash: updatedUser.transactionPinHash ? '***' : 'null' // Don't log actual hash
+    });
+
+    console.log('✅ Transaction PIN set for user:', userId);
+
+    // Return success with PIN status
+    res.status(200).json({ 
+      success: true, 
+      message: "Transaction PIN set successfully",
+      transactionPinSet: true
+    });
+
+  } catch (error) {
+    console.error('❌ Set Transaction PIN Error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: "Failed to set transaction PIN. Please try again." 
+    });
   }
-  const user = await User.findById(userId);
-  if (!user) {
-    return res.status(404).json({ message: "User not found" });
-  }
-  user.transactionPinHash = pin; // Hashed by pre-save hook
-  await user.save();
-  res
-    .status(200)
-    .json({ success: true, message: "Transaction PIN set successfully" });
 };
 
-// controllers/authController.js
+// exports.setTransactionPin = async (req, res) => {
+//   try {
+//     const { pin } = req.body;
+//     const userId = req.user.id || req.user._id;
+
+//     // Validate PIN format
+//     if (!pin || !/^\d{4}$/.test(pin)) {
+//       return res.status(400).json({ 
+//         success: false,
+//         message: "Transaction PIN must be exactly 4 digits" 
+//       });
+//     }
+
+//     // Find user
+//     const user = await User.findById(userId);
+//     if (!user) {
+//       return res.status(404).json({ 
+//         success: false,
+//         message: "User not found" 
+//       });
+//     }
+
+//     // Optional: Check if PIN already exists
+//     if (user.transactionPinHash) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Transaction PIN already set. Please use reset PIN instead."
+//       });
+//     }
+
+//     // Set PIN (will be hashed by pre-save hook)
+//     user.transactionPinHash = pin;
+//     await user.save();
+
+//     console.log('✅ Transaction PIN set for user:', userId);
+
+//     // Return success with PIN status
+//     res.status(200).json({ 
+//       success: true, 
+//       message: "Transaction PIN set successfully",
+//       transactionPinSet: true
+//     });
+
+//   } catch (error) {
+//     console.error('❌ Set Transaction PIN Error:', error);
+//     res.status(500).json({ 
+//       success: false,
+//       message: "Failed to set transaction PIN. Please try again." 
+//     });
+//   }
+// };
+
 
 // 1. Forgot Login PIN (public)
 exports.forgotLoginPin = async (req, res) => {
@@ -1149,28 +1246,142 @@ exports.resetLoginPin = async (req, res) => {
 };
 
 
+// adding fund to wallet balance
 
-/**
- * GET /api/auth/me
- * Auth required (protect)
- */
+exports.addTestFunds = async (req, res, next) => {
+  try {
+    const { amount } = req.body;
+    const userId = req.user.id; // From auth middleware
+
+    // Validate amount
+    if (!amount || amount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid amount",
+      });
+    }
+
+    // Find user and update balance
+    const user = await User.findById(userId);
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Add funds
+    user.walletBalance = (user.walletBalance || 0) + Number(amount);
+    await user.save();
+
+    console.log(`✅ Added ₦${amount} to ${maskPhone(user.phone)}`);
+
+    return res.status(200).json({
+      success: true,
+      message: `₦${amount} added to your wallet`,
+      walletBalance: user.walletBalance,
+    });
+
+  } catch (error) {
+    console.error("❌ Error adding test funds:", error);
+    next(error);
+  }
+};
+
+
 
 exports.me = async (req, res, next) => {
   try {
-    const u = req.user;
+    // Fetch fresh user data from database
+    const u = await User.findById(req.user.id || req.user._id)
+      .select('-password +transactionPinHash')  // ✅ FIX: Explicitly include transactionPinHash
+      .lean();  // Convert to plain object for better performance
+    
+    if (!u) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
+    }
+
+    // Log for debugging
+    console.log('📡 /me endpoint - Fresh DB query:', {
+      userId: u._id,
+      hasTransactionPinHash: !!u.transactionPinHash,
+      transactionPinHash: u.transactionPinHash, // This will now show the actual value
+      walletBalance: u.walletBalance
+    });
+    
+    // Return fresh data with PIN status
     res.json({
-      id: u._id,
-      firstName: u.firstName,
-      lastName: u.lastName,
-      email: u.email,
-      phone: u.phone,
-      isPhoneVerified: u.isPhoneVerified,
-      kyc: u.kyc,
-      walletBalance: u.walletBalance,
-      roles: u.roles,
-      transactionPinSet: !!u.transactionPinHash, // Add flag to indicate if transaction PIN is set
+      success: true,
+      user: {
+        id: u._id,
+        firstName: u.firstName,
+        lastName: u.lastName,
+        email: u.email,
+        phone: u.phone,
+        isPhoneVerified: u.isPhoneVerified,
+        kyc: u.kyc,
+        walletBalance: u.walletBalance || 0,
+        roles: u.roles,
+      },
+      transactionPinSet: !!u.transactionPinHash  // ← This will now work correctly!
     });
   } catch (e) {
+    console.error('❌ /me endpoint error:', e);
     next(e);
   }
 };
+
+
+// /**
+//  * GET /api/auth/me
+//  * Auth required (protect)
+//  */
+// exports.me = async (req, res, next) => {
+//   try {
+  
+//    // Fetch fresh user data from database
+//     const u = await User.findById(req.user.id || req.user._id)
+//       .select('-password')  // Exclude password but NOT transactionPinHash
+//       .lean();  // Convert to plain object for better performance
+    
+//     if (!u) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "User not found"
+//       });
+//     }
+
+//     // Log for debugging
+//     console.log('📡 /me endpoint - Fresh DB query:', {
+//       userId: u._id,
+//       hasTransactionPinHash: !!u.transactionPinHash,
+//       walletBalance: u.walletBalance
+//     });
+    
+//     // Return fresh data with PIN status
+//     res.json({
+//       success: true,
+//       user: {
+//         id: u._id,
+//         firstName: u.firstName,
+//         lastName: u.lastName,
+//         email: u.email,
+//         phone: u.phone,
+//         isPhoneVerified: u.isPhoneVerified,
+//         kyc: u.kyc,
+//         walletBalance: u.walletBalance || 0,
+//         roles: u.roles,
+//       },
+//       transactionPinSet: !!u.transactionPinHash  // ← Now reads from fresh DB data!
+//     });
+//   } catch (e) {
+//     console.error('❌ /me endpoint error:', e);
+//     next(e);
+//   }
+// };
+
+

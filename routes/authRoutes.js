@@ -20,6 +20,7 @@ const {
   verifyResetCode,
   updateRequirePinOnOpen,
   setPinAfterReset,
+  addTestFunds,
 } = require("../controllers/authController");
 const { protect } = require("../middleware/auth");
 const validate  = require("../middleware/validate");
@@ -318,6 +319,22 @@ router.post(
     body("otp").isLength({ min: 6, max: 6 }).withMessage("OTP must be 6 digits"),
   ],
   resetLoginPin
+);
+
+
+
+// wallet funding routes
+router.post(
+  "/add-test-funds",
+ protect,
+ [
+  body("amount")
+    .isNumeric()
+    .withMessage("Amount must be a number")
+    .custom(value => value > 0)
+    .withMessage("Amount must be positive"),
+ ],
+  addTestFunds
 );
 
 // 12. Me
