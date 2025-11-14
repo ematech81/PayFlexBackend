@@ -9,8 +9,7 @@ const { protect } = require("../middleware/auth");
 const verifyPin = require("../middleware/verifyPin");
 const {
   // Core
-  makePayment,
-  verifyTransaction,
+  buyAirtime,
   verfyTransactionPin,
   
   // Data
@@ -22,93 +21,54 @@ const {
   payElectricityBill,
   
 } = require("../controllers/paymentController");
-const axios = require("axios");
+// const axios = require("axios");
 
+
+
+
+// ✅ Buy Airtime
+
+router.post(
+  "/buy-airtime",
+  protect,
+  [
+    // Validation middleware
+    body("phoneNumber")
+      .notEmpty()
+      .withMessage("Phone number is required")
+      .matches(/^\d{11}$/)
+      .withMessage("Phone number must be 11 digits"),
+    body("amount")
+      .notEmpty()
+      .withMessage("Amount is required")
+      .isNumeric()
+      .withMessage("Amount must be a number"),
+    body("pin")
+      .notEmpty()
+      .withMessage("Transaction PIN is required")
+      .matches(/^\d{4}$/)
+      .withMessage("PIN must be 4 digits"),
+  ],
+  (req, res, next) => {
+    // Validation error handler
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: errors.array()[0].msg,
+        errors: errors.array(),
+      });
+    }
+
+    // Continue to controller
+    next();
+  },
+  buyAirtime
+);
 
 
 // ✅ Get Data Plans - NO AUTH REQUIRED
 router.get("/data-plans", getDataPlans) 
-
-// ✅ Buy Airtime
-router.post("/buy-airtime", protect, async (req, res, next) => {
-  try {
-    const { phoneNumber, amount, network, pin } = req.body;
-
-    if (!phoneNumber || !amount || !network || !pin) {
-      return res.status(400).json({ 
-        success: false,
-        message: "Missing required fields" 
-      });
-    }
-
-    if (!req.user) {
-      return res.status(401).json({ 
-        success: false,
-        message: "Authentication required" 
-      });
-    }
-
-    const userId = req.user.id || req.user._id;
-    const user = await User.findById(userId);
-    
-    if (!user) {
-      return res.status(404).json({ 
-        success: false,
-        message: "User not found" 
-      });
-    }
-
-    if (!user.transactionPinHash) {
-      return res.status(403).json({ 
-        success: false,
-        message: "Transaction PIN not set" 
-      });
-    }
-    
-    const isMatch = await bcrypt.compare(String(pin), user.transactionPinHash);
-    if (!isMatch) {
-      return res.status(403).json({ 
-        success: false,
-        message: "Invalid Transaction PIN" 
-      });
-    }
-
-    // ✅ Skip balance check in sandbox
-    const isSandbox = process.env.VTPASS_ENV === 'sandbox';
-
-    console.log("VTPASS_ENV:", process.env.VTPASS_ENV);
-console.log("Is Sandbox:", process.env.VTPASS_ENV === 'sandbox');
-
-    
-    if (!isSandbox && user.walletBalance < amount) {
-      return res.status(400).json({
-        success: false,
-        message: "Insufficient wallet balance"
-      });
-    }
-
-    const serviceID = `${network.toLowerCase()}`;
-    const response = await makePayment(req, res, {
-      serviceID,
-      phoneNumber,
-      amount,
-      userId: user._id,
-    });
-    
-    // ✅ Only deduct in production
-    if (response.success && !isSandbox) {
-      user.walletBalance -= amount;
-      await user.save();
-    }
-    
-    res.json(response);
-  } catch (err) {
-    console.error('Buy airtime error:', err);
-    next(err);
-  }
-});
-
-
 
 /**
  * Buy Data Bundle
@@ -130,9 +90,6 @@ router.post(
       .withMessage("Amount is required")
       .isNumeric()
       .withMessage("Amount must be a number"),
-    body("network")
-      .notEmpty()
-      .withMessage("Network is required"),
     body("variation_code")
       .notEmpty()
       .withMessage("Variation code is required"),

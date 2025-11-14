@@ -38,7 +38,7 @@ const startServer = async () => {
     app.use("/api/kyc", require("./routes/kycRoutes"));
     app.use("/api/pin", require("./routes/pinRoutes"));
     app.use("/api/payments", require("./routes/paymentRoutes"));
-    app.use("/api/phone", require("./routes/phoneVerificationRoutes"));
+    // app.use('/api/payment', require('./routes/payStackRoutes'));
 
     // 7️⃣ Health endpoint
     app.get("/health", (req, res) => res.json({ ok: true }));
