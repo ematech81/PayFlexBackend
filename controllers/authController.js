@@ -1065,57 +1065,6 @@ exports.setTransactionPin = async (req, res) => {
   }
 };
 
-// exports.setTransactionPin = async (req, res) => {
-//   try {
-//     const { pin } = req.body;
-//     const userId = req.user.id || req.user._id;
-
-//     // Validate PIN format
-//     if (!pin || !/^\d{4}$/.test(pin)) {
-//       return res.status(400).json({ 
-//         success: false,
-//         message: "Transaction PIN must be exactly 4 digits" 
-//       });
-//     }
-
-//     // Find user
-//     const user = await User.findById(userId);
-//     if (!user) {
-//       return res.status(404).json({ 
-//         success: false,
-//         message: "User not found" 
-//       });
-//     }
-
-//     // Optional: Check if PIN already exists
-//     if (user.transactionPinHash) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Transaction PIN already set. Please use reset PIN instead."
-//       });
-//     }
-
-//     // Set PIN (will be hashed by pre-save hook)
-//     user.transactionPinHash = pin;
-//     await user.save();
-
-//     console.log('✅ Transaction PIN set for user:', userId);
-
-//     // Return success with PIN status
-//     res.status(200).json({ 
-//       success: true, 
-//       message: "Transaction PIN set successfully",
-//       transactionPinSet: true
-//     });
-
-//   } catch (error) {
-//     console.error('❌ Set Transaction PIN Error:', error);
-//     res.status(500).json({ 
-//       success: false,
-//       message: "Failed to set transaction PIN. Please try again." 
-//     });
-//   }
-// };
 
 
 // 1. Forgot Login PIN (public)
