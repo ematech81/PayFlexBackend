@@ -272,6 +272,10 @@ const makePayment = async (
     throw new Error(transactionError.response_description || error.message);
   }
 };
+
+
+
+
 /**
  * Buy Airtime
  */
@@ -289,44 +293,53 @@ const buyAirtime = async (req, res) => {
     if (!phoneNumber || !amount || !network || !pin) {
       return res.status(400).json({
         success: false,
-        message: 'Missing required fields: phoneNumber, amount, network, pin are all required',
+        message: 'Missing required fields: phoneNumber, amount, network, pin',
       });
     }
 
+    // Validate PIN + user
     const user = await verifyUserAndPin(req, pin);
+
+    // Validate wallet
     validateWalletBalance(user, amount);
 
+    // Map VTpass network codes
     const networkMap = {
-      'mtn': 'mtn',
-      'airtel': 'airtel',
-      'glo': 'glo',
+      mtn: 'mtn',
+      airtel: 'airtel',
+      glo: 'glo',
       '9mobile': 'etisalat',
-      'etisalat': 'etisalat',
+      etisalat: 'etisalat',
     };
 
     const serviceID = networkMap[network.toLowerCase()] || network.toLowerCase();
+
     const request_id = generateRequestId();
 
+    // ❗ FIXED PAYLOAD — VTpass airtime requires "phone"
     const payload = {
       request_id,
       serviceID,
-      amount: Number(amount).toString(),
-      phoneNumber,
+      amount: String(amount),
+      phone: phoneNumber,          // VTpass field
+      phoneNumber: phoneNumber,    // Transaction model field
     };
 
-    console.log('✅ VTpass Airtime Payload:', payload);
+    console.log('✅ VTpass Airtime Payload (Corrected):', payload);
 
+    // Shared payment function
     const response = await makePayment(req, res, {
       ...payload,
-      userId: user._id || user.id,
+      userId: user._id,
     });
 
+    // Deduct wallet on success
     if (response.success) {
       await deductWalletBalance(user, amount);
       console.log('✅ Wallet balance deducted');
     }
 
-    // ✅ Ensure reference is at top level for easy access
+    // Respond to client
     res.json({
       ...response,
       reference: response.data?.reference || request_id,
@@ -340,6 +353,9 @@ const buyAirtime = async (req, res) => {
     });
   }
 };
+
+
+
 
 /**
  * Get Data Plans - Uses GET request
@@ -544,37 +560,37 @@ const verfyTransactionPin = async (req, res) => {
   }
 };
 
-/**
- * Test VTPass Connection
- */
-const testVTPassConnection = async (req, res) => {
-  try {
-    console.log('🔑 Testing VTPass credentials...');
-    console.log('API Key:', process.env.VTPASS_API_KEY);
-    console.log('Secret Key:', process.env.VTPASS_SECRET_KEY ? '✅ Set' : '❌ Missing');
-    console.log('Public Key:', process.env.VTPASS_PUBLIC_KEY ? '✅ Set' : '❌ Missing');
-    console.log('Environment:', process.env.VTPASS_ENV);
+// /**
+//  * Test VTPass Connection
+//  */
+// const testVTPassConnection = async (req, res) => {
+//   try {
+//     console.log('🔑 Testing VTPass credentials...');
+//     console.log('API Key:', process.env.VTPASS_API_KEY);
+//     console.log('Secret Key:', process.env.VTPASS_SECRET_KEY ? '✅ Set' : '❌ Missing');
+//     console.log('Public Key:', process.env.VTPASS_PUBLIC_KEY ? '✅ Set' : '❌ Missing');
+//     console.log('Environment:', process.env.VTPASS_ENV);
     
-    // ✅ Use vtpassApiGet for balance check (GET request)
-    const response = await vtpassApiGet.get('/balance');
+//     // ✅ Use vtpassApiGet for balance check (GET request)
+//     const response = await vtpassApiGet.get('/balance');
     
-    console.log('✅ VTPass connection successful!');
-    console.log('Balance:', response.data);
+//     console.log('✅ VTPass connection successful!');
+//     console.log('Balance:', response.data);
     
-    res.json({
-      success: true,
-      message: 'VTPass credentials are valid',
-      balance: response.data,
-    });
-  } catch (error) {
-    console.error('❌ VTPass connection failed:', error.response?.data || error.message);
-    res.status(500).json({
-      success: false,
-      message: 'VTPass credentials invalid',
-      error: error.response?.data || error.message,
-    });
-  }
-};
+//     res.json({
+//       success: true,
+//       message: 'VTPass credentials are valid',
+//       balance: response.data,
+//     });
+//   } catch (error) {
+//     console.error('❌ VTPass connection failed:', error.response?.data || error.message);
+//     res.status(500).json({
+//       success: false,
+//       message: 'VTPass credentials invalid',
+//       error: error.response?.data || error.message,
+//     });
+//   }
+// };
 
 
 // ==========================
@@ -1095,6 +1111,45 @@ const renewTVSubscription = async (req, res) => {
   }
 };
 
+
+
+/**
+ * Get Transaction by Reference
+ * GET /api/transactions/:reference
+ */
+const getTransactionByReference = async (req, res) => {
+  try {
+    const { reference } = req.params;
+    const userId = req.user._id || req.user.id;
+
+    console.log('📋 Fetching transaction:', { reference, userId });
+
+    const transaction = await Transaction.findOne({
+      reference,
+      userId, // Ensure user owns the transaction
+    });
+
+    if (!transaction) {
+      return res.status(404).json({
+        success: false,
+        message: 'Transaction not found',
+      });
+    }
+
+    res.json({
+      success: true,
+      data: transaction,
+    });
+  } catch (error) {
+    console.error('Get Transaction Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch transaction',
+      error: error.message,
+    });
+  }
+};
+
 // ============================================
 // GENERAL EXPORT 
 // ============================================
@@ -1115,11 +1170,14 @@ module.exports = {
   payElectricityBill,
 
   // TEST FUNCTION EXPORT
-  testVTPassConnection,
+  // testVTPassConnection,
 
   // TV EXPORT
   getTVBouquets,
   verifySmartcard,
   subscribeTVBouquet,
   renewTVSubscription,
+
+  // transaction reference
+  getTransactionByReference
 };

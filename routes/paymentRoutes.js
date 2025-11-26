@@ -16,18 +16,20 @@ const {
   // Electricity
   verifyMeterNumber,
   payElectricityBill,
-  testVTPassConnection,
+  // testVTPassConnection,
 
   // Tv Subscription
   getTVBouquets,
   verifySmartcard,
   subscribeTVBouquet,
   renewTVSubscription,
+
+  getTransactionByReference
   
 } = require("../controllers/paymentController");
 
 // Test endpoint
-router.get('/test-vtpass', protect, testVTPassConnection);
+// router.get('/test-vtpass', protect, testVTPassConnection);
 
 // ✅ Buy Airtime
 router.post(
@@ -81,6 +83,7 @@ router.post(
 
 // ✅ Get Data Plans
 router.get("/data-plans", protect, getDataPlans);
+
 
 // ✅ Buy Data Bundle
 router.post(
@@ -416,5 +419,8 @@ router.post(
   },
   renewTVSubscription
 );
+
+// get transaction details
+router.get('/transactions/:reference', protect, getTransactionByReference);
 
 module.exports = router;
