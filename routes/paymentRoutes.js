@@ -24,7 +24,11 @@ const {
   subscribeTVBouquet,
   renewTVSubscription,
 
-  getTransactionByReference
+  getTransactionByReference,
+
+// get transation history
+  getTransactionHistory,
+  getTransactionStats
   
 } = require("../controllers/paymentController");
 
@@ -420,7 +424,13 @@ router.post(
   renewTVSubscription
 );
 
-// get transaction details
+
+
+// ✅ Specific routes FIRST
+router.get('/transactions/history', protect, getTransactionHistory);
+router.get('/transactions/stats', protect, getTransactionStats);
+
+// ✅ Parameterized route LAST
 router.get('/transactions/:reference', protect, getTransactionByReference);
 
 module.exports = router;

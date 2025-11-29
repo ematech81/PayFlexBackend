@@ -1120,8 +1120,7 @@ const renewTVSubscription = async (req, res) => {
 const getTransactionByReference = async (req, res) => {
   try {
     const { reference } = req.params;
-    const userId = req.user._id || req.user.id;
-
+    const userId = req.user?.id || req.user?._id;
     console.log('📋 Fetching transaction:', { reference, userId });
 
     const transaction = await Transaction.findOne({
@@ -1149,6 +1148,193 @@ const getTransactionByReference = async (req, res) => {
     });
   }
 };
+
+/**
+ * Get User Transaction History with Filters
+ * GET /api/transactions/history
+ */
+// In paymentController.js - getTransactionHistory function
+
+const getTransactionHistory = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    const { 
+      category,
+      status,
+      startDate,
+      endDate,
+      page = 1,
+      limit = 20 
+    } = req.query;
+
+    console.log('📋 Fetching transaction history:', { 
+      userId: userId.toString(), // ✅ Log as string
+      category, 
+      status, 
+      startDate, 
+      endDate,
+    });
+
+    // Build query
+    const query = { 
+      userId: userId // ✅ MongoDB will handle ObjectId conversion
+    };
+
+    // Filter by category (service type)
+    if (category && category !== 'all') {
+      query.type = category;
+    }
+
+    // Filter by status
+    if (status && status !== 'all') {
+      query.status = status;
+    }
+
+    // Filter by date range
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) {
+        query.createdAt.$gte = new Date(startDate);
+      }
+      if (endDate) {
+        const endDateTime = new Date(endDate);
+        endDateTime.setHours(23, 59, 59, 999);
+        query.createdAt.$lte = endDateTime;
+      }
+    }
+
+    console.log('🔍 Query:', JSON.stringify(query, null, 2)); // ✅ Debug query
+
+    // Calculate pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    // Execute query
+    const transactions = await Transaction.find(query)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .lean();
+
+    console.log(`✅ Found ${transactions.length} transactions`); // ✅ Check count
+
+    // Get total count
+    const totalCount = await Transaction.countDocuments(query);
+    const totalPages = Math.ceil(totalCount / parseInt(limit));
+
+    // Calculate summary statistics
+    const stats = await Transaction.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: null,
+          totalAmount: { $sum: '$amount' },
+          successCount: {
+            $sum: { $cond: [{ $eq: ['$status', 'success'] }, 1, 0] },
+          },
+          failedCount: {
+            $sum: { $cond: [{ $eq: ['$status', 'failed'] }, 1, 0] },
+          },
+          pendingCount: {
+            $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] },
+          },
+        },
+      },
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        transactions,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages,
+          totalCount,
+          hasMore: parseInt(page) < totalPages,
+        },
+        stats: stats[0] || {
+          totalAmount: 0,
+          successCount: 0,
+          failedCount: 0,
+          pendingCount: 0,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('❌ Get Transaction History Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch transaction history',
+      error: error.message,
+    });
+  }
+};
+/**
+ * Get Transaction Statistics
+ * GET /api/transactions/stats
+ */
+const getTransactionStats = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    const { period = 'month' } = req.query; // day, week, month, year
+
+    const now = new Date();
+    let startDate;
+
+    switch (period) {
+      case 'day':
+        startDate = new Date(now.setHours(0, 0, 0, 0));
+        break;
+      case 'week':
+        startDate = new Date(now.setDate(now.getDate() - 7));
+        break;
+      case 'month':
+        startDate = new Date(now.setMonth(now.getMonth() - 1));
+        break;
+      case 'year':
+        startDate = new Date(now.setFullYear(now.getFullYear() - 1));
+        break;
+      default:
+        startDate = new Date(now.setMonth(now.getMonth() - 1));
+    }
+
+    
+    const stats = await Transaction.aggregate([
+      {
+        $match: {
+          userId: mongoose.Types.ObjectId(userId),
+          createdAt: { $gte: startDate },
+        },
+      },
+      {
+        $group: {
+          _id: '$type',
+          count: { $sum: 1 },
+          totalAmount: { $sum: '$amount' },
+          successCount: {
+            $sum: { $cond: [{ $eq: ['$status', 'success'] }, 1, 0] },
+          },
+        },
+      },
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        period,
+        stats,
+      },
+    });
+  } catch (error) {
+    console.error('❌ Get Transaction Stats Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch transaction statistics',
+      error: error.message,
+    });
+  }
+};
+
+
 
 // ============================================
 // GENERAL EXPORT 
@@ -1179,5 +1365,8 @@ module.exports = {
   renewTVSubscription,
 
   // transaction reference
-  getTransactionByReference
+  getTransactionByReference,
+
+  getTransactionHistory,
+  getTransactionStats,
 };

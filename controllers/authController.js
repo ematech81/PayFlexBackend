@@ -25,7 +25,7 @@ const signToken = (user) =>
     { id: user._id, roles: user.roles },
     process.env.JWT_SECRET,
     { expiresIn: JWT_EXPIRES_IN }
-  );
+  ); 
 
 /**
  * Generates a secure 6-digit numeric OTP
