@@ -29,6 +29,18 @@ const vtpassApiGet = axios.create({
   },
 });
 
+
+// ✅ VTU Africa API Client
+const vtuAfricaApi = axios.create({
+  baseURL:
+    process.env.VTU_AFRICA_ENV === "sandbox"
+      ? "https://vtuafrica.com.ng/portal/api-test"
+      : "https://vtuafrica.com.ng/portal/api",
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
 // Generate proper VTpass request_id
 const generateRequestId = () => {
   const now = new Date();
@@ -164,11 +176,11 @@ const makePayment = async (
         // Electricity payment payload
         payload = {
           request_id: finalRequestId,
-          serviceID,
-          billersCode, // Meter number
-          variation_code: variation_code || "prepaid", // prepaid/postpaid
-          amount: amount.toString(),
-          phone: phoneNumber,
+    serviceID, 
+    billersCode, // Meter number
+    variation_code: variation_code,
+    amount: amount.toString(),
+    phone: phoneNumber,
         };
         break;
 
@@ -599,7 +611,7 @@ const verfyTransactionPin = async (req, res) => {
 
 /**
  * Verify Meter Number
- */
+ */ 
 const verifyMeterNumber = async (req, res) => {
   try {
     const { meterNumber, disco, meterType } = req.body;
@@ -640,8 +652,8 @@ const verifyMeterNumber = async (req, res) => {
     };
 
     const discoId = discoMap[disco.toLowerCase()] || disco;
-    const serviceID = `${discoId}-${meterType}`;
-
+    const serviceID = discoMap[disco.toLowerCase()] || disco;
+   
     console.log('Service ID:', serviceID);
 
     try {
@@ -743,14 +755,16 @@ const payElectricityBill = async (req, res) => {
     };
     
     const discoId = discoMap[disco.toLowerCase()] || disco;
-    const serviceID = `${discoId}-${meterType}`;
+    const serviceID = discoMap[disco.toLowerCase()] || disco;
 
     const response = await makePayment(req, res, {
-      serviceID,
+      serviceID, // ✅ e.g., "ikeja-electric"
       billersCode: meterNumber,
+      variation_code: meterType, // ✅ "prepaid" or "postpaid"
       amount: Number(amount),
       phoneNumber: phone || user.phone || user.phoneNumber,
       userId: user._id,
+      request_id: generateRequestId(),
     });
 
     if (response.success) {
@@ -790,7 +804,6 @@ const getTVBouquets = async (req, res) => {
       });
     }
 
-    // Map provider to VTPass serviceID
     const providerMap = {
       dstv: "dstv",
       gotv: "gotv",
@@ -809,7 +822,6 @@ const getTVBouquets = async (req, res) => {
 
     console.log("🔍 Fetching from VTPass:", serviceID);
 
-    // Use vtpassApiGet for GET requests (with public-key)
     const response = await vtpassApiGet.get(
       `/service-variations?serviceID=${serviceID}`,
       { timeout: 15000 }
@@ -822,14 +834,22 @@ const getTVBouquets = async (req, res) => {
       response.data?.content?.variations ||
       [];
 
-    console.log("📦 Bouquets count:", variations.length);
+    console.log("📦 Raw bouquets count:", variations.length);
+
+    // ✅ Filter out bouquets below ₦1000
+    const filteredVariations = variations.filter((bouquet) => {
+      const amount = parseFloat(bouquet.variation_amount || 0);
+      return amount >= 1000; // Only keep ₦1000 and above
+    });
+
+    console.log("✅ Filtered bouquets count (≥₦1000):", filteredVariations.length);
 
     res.json({
       success: true,
       message: "TV bouquets fetched successfully",
       data: {
         provider,
-        bouquets: variations,
+        bouquets: filteredVariations,
       },
     });
   } catch (error) {
@@ -843,6 +863,7 @@ const getTVBouquets = async (req, res) => {
     });
   }
 };
+
 
 /**
  * Verify Smartcard Number
@@ -901,7 +922,38 @@ const verifySmartcard = async (req, res) => {
 
       console.log('VTPass Verification Response:', response.data);
 
-      if (response.data.code === '000' || response.data.content) {
+      // ✅ FIX: Check if VTpass response contains an error in content
+      const hasErrorInContent = response.data.content?.error || 
+                                response.data.content?.Error || 
+                                response.data.content?.ERROR;
+      
+      const hasValidCustomerData = response.data.content?.Customer_Name || 
+                                  response.data.content?.customerName;
+
+      // ✅ FIX: If VTpass returns an error in content, treat as failed verification
+      if (hasErrorInContent) {
+        console.log('❌ VTpass returned error in content:', hasErrorInContent);
+        
+        return res.status(400).json({
+          success: false,
+          message: hasErrorInContent || 'Invalid smartcard number',
+          vtpassResponse: response.data, // Optional: for debugging
+        });
+      }
+
+      // ✅ FIX: Also check if we have valid customer data
+      if (!hasValidCustomerData) {
+        console.log('❌ No valid customer data in VTpass response');
+        
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid smartcard number or no customer data found',
+          vtpassResponse: response.data, // Optional: for debugging
+        });
+      }
+
+      // ✅ Only return success if we have valid customer data and no errors
+      if (response.data.code === '000' && hasValidCustomerData) {
         return res.json({
           success: true,
           message: 'Smartcard verified successfully',
@@ -932,6 +984,7 @@ const verifySmartcard = async (req, res) => {
         return res.status(400).json({
           success: false,
           message: response.data.response_description || 'Smartcard verification failed',
+          vtpassResponse: response.data, // Optional: for debugging
         });
       }
     } catch (vtpassError) {
@@ -941,6 +994,7 @@ const verifySmartcard = async (req, res) => {
         success: false,
         message: vtpassError.response?.data?.response_description || 
                 'Could not verify smartcard number. Please check and try again.',
+        vtpassResponse: vtpassError.response?.data, // Optional: for debugging
       });
     }
   } catch (error) {
@@ -952,6 +1006,7 @@ const verifySmartcard = async (req, res) => {
     });
   }
 };
+
 
 /**
  * Subscribe TV (New Purchase/Change Bouquet)
@@ -1336,6 +1391,561 @@ const getTransactionStats = async (req, res) => {
 
 
 
+
+
+// ============================================
+// VTU AFRICA CONTROLLERS
+// ============================================
+
+
+/**
+ * Get Available Exam Types and Products
+ */
+const getExamProducts = async (req, res) => {
+  try {
+    const examProducts = {
+      waec: [
+        { code: '1', name: 'WAEC Result Checking PIN', service: 'waec' },
+        { code: '2', name: 'WAEC GCE Registration PIN', service: 'waec' },
+        { code: '3', name: 'WAEC Verification PIN', service: 'waec' },
+      ],
+      neco: [
+        { code: '1', name: 'NECO Result Checking Token', service: 'neco' },
+        { code: '2', name: 'NECO GCE Registration PIN', service: 'neco' },
+      ],
+      nabteb: [
+        { code: '1', name: 'NABTEB Result Checking PIN', service: 'nabteb' },
+        { code: '2', name: 'NABTEB GCE Registration PIN', service: 'nabteb' },
+      ],
+      jamb: [
+        { code: '1', name: 'JAMB UTME Registration PIN', service: 'jamb', requiresProfile: true },
+        { code: '2', name: 'JAMB Direct Entry Registration PIN', service: 'jamb', requiresProfile: true },
+      ],
+    };
+
+    res.json({
+      success: true,
+      data: examProducts,
+    });
+  } catch (error) {
+    console.error('❌ Get Exam Products Error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to fetch exam products',
+    });
+  }
+};
+
+
+/**
+ * Verify JAMB Profile Code
+ */
+const verifyJAMBProfile = async (req, res) => {
+  try {
+    const { profilecode, product_code } = req.body;
+
+    if (!profilecode || !product_code) {
+      return res.status(400).json({
+        success: false,
+        message: 'Profile code and product code are required',
+      });
+    }
+
+    console.log('=== JAMB PROFILE VERIFICATION ===');
+    console.log('Profile Code:', profilecode);
+    console.log('Product Code:', product_code);
+    console.log('=================================');
+
+    // ✅ BUILD QUERY PARAMETERS (NOT BODY)
+    const params = {
+      apikey: process.env.VTU_AFRICA_API_KEY,
+      serviceName: 'jamb',
+      profilecode,
+      product_code,
+    };
+
+    // ✅ MAKE GET REQUEST (NOT POST)
+    const response = await vtuAfricaApi.get('/merchant-verify/', { params });
+    
+    console.log('✅ JAMB Profile Verification Response:', response.data);
+
+    const responseData = response.data;
+    const description = responseData.description;
+
+    // Check if verification successful
+    if (responseData.code === 101 || description?.Status === 'Completed') {
+      return res.json({
+        success: true,
+        message: description?.message || 'Profile verified successfully',
+        data: {
+          customerName: description?.Customer,
+          profileCode: description?.ProfileCode,
+          service: description?.Service,
+          productCode: description?.product_code,
+        },
+      });
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: description?.message || responseData.description || 'Verification failed',
+      });
+    }
+  } catch (error) {
+    console.error('❌ Verify JAMB Profile Error:', error.response?.data || error.message);
+    res.status(500).json({
+      success: false,
+      message: error.response?.data?.message || error.message || 'Failed to verify profile code',
+    });
+  }
+};
+
+/**
+ * Purchase Exam PIN (WAEC, NECO, NABTEB, JAMB)
+ */
+/**
+ * Purchase Exam PIN (WAEC, NECO, NABTEB, JAMB)
+ */
+const purchaseExamPin = async (req, res) => {
+  try {
+    const {
+      service,
+      product_code,
+      quantity,
+      phone,
+      pin,
+      // JAMB specific fields
+      profilecode,
+      sender,
+    } = req.body;
+
+    console.log('=== EXAM PIN PURCHASE REQUEST ===');
+    console.log('Service:', service);
+    console.log('Product Code:', product_code);
+    console.log('Quantity:', quantity);
+    console.log('Phone:', phone);
+    console.log('=================================');
+
+    // Validate required fields
+    if (!service || !product_code || !quantity || !phone || !pin) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: service, product_code, quantity, phone, pin',
+      });
+    }
+
+    // JAMB specific validation
+    const isJAMB = service === 'jamb';
+    if (isJAMB && (!profilecode || !sender)) {
+      return res.status(400).json({
+        success: false,
+        message: 'JAMB purchases require profilecode and sender (email)',
+      });
+    }
+
+    // Verify PIN and user
+    const user = await verifyUserAndPin(req, pin);
+
+    // ✅ Estimated pricing for wallet validation (approximate)
+    const estimatedPrices = {
+      waec: { '1': 3500, '2': 7000, '3': 2000 },
+      neco: { '1': 1000, '2': 5000 },
+      nabteb: { '1': 1500, '2': 5500 },
+      jamb: { '1': 4700, '2': 4700 },
+    };
+    
+    const estimatedAmount = (estimatedPrices[service]?.[product_code] || 5000) * quantity;
+
+    // ✅ Validate wallet (using estimated amount) - DON'T DEDUCT YET
+    validateWalletBalance(user, estimatedAmount);
+
+    // Generate unique reference
+    const reference = `ref_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    // Create transaction record with estimated amount
+    const newTransaction = new Transaction({
+      serviceID: `${service}_${product_code}`,
+      phoneNumber: phone,
+      amount: estimatedAmount,
+      reference,
+      status: 'pending',
+      quantity,
+      userId: user._id,
+      type: 'education',
+      variation_code: product_code,
+    });
+    await newTransaction.save();
+
+    // ✅ BUILD QUERY PARAMETERS (NOT BODY)
+    const params = {
+      apikey: process.env.VTU_AFRICA_API_KEY,
+      service,
+      product_code,
+      quantity,
+      ref: reference,
+    };
+
+    // Add JAMB specific fields as query params
+    if (isJAMB) {
+      params.profilecode = profilecode;
+      params.sender = sender;
+      params.phone = phone;
+    }
+
+    console.log('✅ VTU Africa Exam PIN Params:', params);
+
+    // ✅ MAKE GET REQUEST (NOT POST)
+    const response = await vtuAfricaApi.get('/exam-pin/', { params });
+    console.log('✅ VTU Africa Response:', response.data);
+
+    // Parse the response
+    const responseData = response.data;
+    const description = responseData.description;
+
+    // ✅ Check for VTU Africa LOW BALANCE error (code 102)
+    if (responseData.code === 102 || responseData.code === '102') {
+      newTransaction.status = 'failed';
+      newTransaction.failureReason = 'VTU Africa account has insufficient balance';
+      newTransaction.response = responseData;
+      await newTransaction.save();
+
+      return res.status(400).json({
+        success: false,
+        message: 'Service temporarily unavailable. Please try again later.',
+        vtpassError: description?.message,
+      });
+    }
+
+    // Update transaction with actual amount from API
+    const actualAmount = parseFloat(description?.Amount_Charged || estimatedAmount);
+    newTransaction.amount = actualAmount;
+
+    // Check if successful (code 101)
+    if (responseData.code === 101 || responseData.code === '101' || description?.Status === 'Completed') {
+      newTransaction.status = 'success';
+      newTransaction.transactionId = description?.ReferenceID || reference;
+      newTransaction.purchasedCode = description?.pins;
+      
+      // ✅ ONLY DEDUCT WALLET ON SUCCESS
+      await deductWalletBalance(user, actualAmount);
+      console.log(`✅ Wallet deducted: ₦${actualAmount}`);
+    } else {
+      newTransaction.status = 'failed';
+      newTransaction.failureReason = description?.message || responseData.description || 'Transaction failed';
+    }
+
+    newTransaction.response = responseData;
+    await newTransaction.save();
+
+    res.json({
+      success: newTransaction.status === 'success',
+      message: description?.message || 'Transaction processed',
+      data: {
+        reference: newTransaction.reference,
+        transactionId: newTransaction.transactionId,
+        pins: newTransaction.purchasedCode,
+        unitPrice: description?.UnitPrice,
+        amountCharged: description?.Amount_Charged,
+        quantity: newTransaction.quantity,
+        service: service.toUpperCase(),
+        productName: description?.ProductName,
+        previousBalance: description?.Previous_Balance,
+        currentBalance: description?.Current_Balance,
+      },
+    });
+  } catch (error) {
+    console.error('❌ Purchase Exam PIN Error:', error.response?.data || error.message);
+    res.status(500).json({
+      success: false,
+      message: error.response?.data?.message || error.message || 'Failed to purchase exam PIN',
+    });
+  }
+};
+
+
+/**
+ * Verify Airtime to Cash Service Availability
+ * Checks if the conversion service is available for a network
+ */
+const verifyAirtimeToCash = async (req, res) => {
+  try {
+    const { network } = req.body;
+
+    if (!network) {
+      return res.status(400).json({
+        success: false,
+        message: 'Network is required',
+      });
+    }
+
+    console.log('=== AIRTIME TO CASH VERIFICATION ===');
+    console.log('Network:', network);
+    console.log('====================================');
+
+    // BUILD QUERY PARAMETERS
+    const params = {
+      apikey: process.env.VTU_AFRICA_API_KEY,
+      serviceName: 'Airtime2Cash',
+      network: network.toLowerCase(),
+    };
+
+    // MAKE GET REQUEST
+    const response = await vtuAfricaApi.get('/merchant-verify/', { params });
+    console.log('✅ VTU Africa Verification Response:', response.data);
+
+    const responseData = response.data;
+    const description = responseData.description;
+
+    // Check if service is available (code 101)
+    if (responseData.code === 101 || responseData.code === '101' || description?.Status === 'Completed') {
+      return res.json({
+        success: true,
+        message: description?.message || 'Service is available',
+        data: {
+          phoneNumber: description?.Phone_Number,
+          network: description?.Network,
+          status: description?.Status,
+        },
+      });
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: description?.message || 'Service is currently unavailable',
+      });
+    }
+  } catch (error) {
+    console.error('❌ Verify Airtime to Cash Error:', error.response?.data || error.message);
+    res.status(500).json({
+      success: false,
+      message: error.response?.data?.message || error.message || 'Failed to verify service',
+    });
+  }
+};
+
+/**
+ * Convert Airtime to Cash
+ * Processes airtime conversion after user transfers airtime
+ */
+const convertAirtimeToCash = async (req, res) => {
+  try {
+    const {
+      network,
+      senderNumber,
+      amount,
+      sitePhone,
+      pin,
+    } = req.body;
+
+    console.log('=== AIRTIME TO CASH CONVERSION ===');
+    console.log('Network:', network);
+    console.log('Sender Number:', senderNumber);
+    console.log('Amount:', amount);
+    console.log('Site Phone:', sitePhone);
+    console.log('==================================');
+
+    // Validate required fields
+    if (!network || !senderNumber || !amount || !sitePhone || !pin) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: network, senderNumber, amount, sitePhone, pin',
+      });
+    }
+
+    // Verify PIN and user
+    const user = await verifyUserAndPin(req, pin);
+
+    // Generate unique reference
+    const reference = `ref_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    // Calculate expected credit (assuming 2% charge as per documentation)
+    const chargePercentage = 2;
+    const charge = (amount * chargePercentage) / 100;
+    const expectedCredit = amount - charge;
+
+    // Create transaction record
+    const newTransaction = new Transaction({
+      serviceID: `airtime2cash_${network}`,
+      phoneNumber: senderNumber,
+      amount: expectedCredit, // Amount user will receive
+      reference,
+      status: 'pending',
+      userId: user._id,
+      type: 'airtime_conversion',
+      billersCode: sitePhone, // Store transfer destination
+    });
+    await newTransaction.save();
+
+    // BUILD QUERY PARAMETERS
+    const params = {
+      apikey: process.env.VTU_AFRICA_API_KEY,
+      network: network.toLowerCase(),
+      sender: user.email || `user${user._id}@payflex.com`, // User's email or generated
+      sendernumber: senderNumber,
+      amount: amount.toString(),
+      sitephone: sitePhone,
+      ref: reference,
+      webhookURL: process.env.VTU_AFRICA_WEBHOOK_URL || '',
+    };
+
+    console.log('✅ VTU Africa Airtime to Cash Params:', params);
+
+    // MAKE GET REQUEST
+    const response = await vtuAfricaApi.get('/airtime-cash/', { params });
+    console.log('✅ VTU Africa Response:', response.data);
+
+    // Parse the response
+    const responseData = response.data;
+    const description = responseData.description;
+
+    // Update transaction with actual amounts
+    const actualCredit = parseFloat(description?.AmountPaid || expectedCredit);
+    const actualCharge = parseFloat(description?.Charge || charge);
+    
+    newTransaction.amount = actualCredit;
+
+    // Check if request received successfully (code 101, status: Processing)
+    if (responseData.code === 101 || responseData.code === '101' || description?.Status === 'Processing') {
+      newTransaction.status = 'processing'; // Will be updated via webhook
+      newTransaction.transactionId = description?.ReferenceID || reference;
+      
+      console.log(`✅ Airtime conversion request accepted: ${newTransaction.transactionId}`);
+    } else {
+      newTransaction.status = 'failed';
+      newTransaction.failureReason = description?.message || 'Conversion request failed';
+    }
+
+    newTransaction.response = responseData;
+    await newTransaction.save();
+
+    res.json({
+      success: newTransaction.status === 'processing',
+      message: description?.message || 'Conversion request processed',
+      data: {
+        reference: newTransaction.reference,
+        transactionId: newTransaction.transactionId,
+        status: newTransaction.status,
+        amountTransferred: description?.AmountTransferred || amount,
+        charge: actualCharge,
+        amountToPay: actualCredit,
+        network: description?.Network || network,
+        senderNumber: description?.senderNumber || senderNumber,
+        transferPhone: sitePhone,
+      },
+    });
+  } catch (error) {
+    console.error('❌ Convert Airtime to Cash Error:', error.response?.data || error.message);
+    res.status(500).json({
+      success: false,
+      message: error.response?.data?.message || error.message || 'Failed to process conversion',
+    });
+  }
+};
+
+/**
+ * VTU Africa Airtime to Cash Webhook Handler
+ */
+const handleAirtimeToCashWebhook = async (req, res) => {
+  try {
+    console.log('=== AIRTIME TO CASH WEBHOOK RECEIVED ===');
+    console.log('Webhook Data:', req.body);
+    
+    const { ref, status, credit, message } = req.body;
+
+    if (!ref) {
+      return res.status(400).json({ code: 400, message: 'Reference missing' });
+    }
+
+    // Find transaction by reference
+    const transaction = await Transaction.findOne({ reference: ref });
+    
+    if (!transaction) {
+      console.log('❌ Transaction not found for ref:', ref);
+      return res.status(404).json({ code: 404, message: 'Transaction not found' });
+    }
+
+    // Update transaction status
+    if (status === 'Completed') {
+      transaction.status = 'success';
+      transaction.amount = parseFloat(credit || transaction.amount);
+      
+      // Credit user wallet
+      const user = await User.findById(transaction.userId);
+      if (user) {
+        user.walletBalance += transaction.amount;
+        await user.save();
+        console.log(`✅ User wallet credited: ₦${transaction.amount}`);
+      }
+    } else {
+      transaction.status = 'failed';
+      transaction.failureReason = message || 'Conversion failed';
+    }
+
+    transaction.response = req.body;
+    await transaction.save();
+
+    console.log('✅ Airtime to Cash transaction updated:', transaction._id);
+
+    // Return required webhook response format
+    res.status(200).json({ 
+      code: 101, 
+      status: 'Completed', 
+      message: 'Webhook processed successfully' 
+    });
+  } catch (error) {
+    console.error('❌ Airtime to Cash Webhook Error:', error);
+    res.status(500).json({ 
+      code: 500, 
+      message: 'Webhook processing failed' 
+    });
+  }
+};
+
+
+/**
+ * VTU Africa Webhook Handler
+ * Receives transaction status updates from VTU Africa
+ */
+const handleVTUAfricaWebhook = async (req, res) => {
+  try {
+    console.log('=== VTU AFRICA WEBHOOK RECEIVED ===');
+    console.log('Webhook Data:', req.body);
+    
+    const { ref, status, pin, pins, data } = req.body;
+
+    if (!ref) {
+      return res.status(400).json({ message: 'Reference missing' });
+    }
+
+    // Find transaction by reference
+    const transaction = await Transaction.findOne({ reference: ref });
+    
+    if (!transaction) {
+      console.log('❌ Transaction not found for ref:', ref);
+      return res.status(404).json({ message: 'Transaction not found' });
+    }
+
+    // Update transaction status
+    if (status === 'success' || status === 'delivered') {
+      transaction.status = 'success';
+      transaction.purchasedCode = pin || pins || data?.pins;
+    } else {
+      transaction.status = 'failed';
+      transaction.failureReason = req.body.message || 'Transaction failed';
+    }
+
+    transaction.response = req.body;
+    await transaction.save();
+
+    console.log('✅ Transaction updated via webhook:', transaction._id);
+
+    // Acknowledge receipt
+    res.status(200).json({ message: 'Webhook processed' });
+  } catch (error) {
+    console.error('❌ Webhook Error:', error);
+    res.status(500).json({ message: 'Webhook processing failed' });
+  }
+};
+
+
 // ============================================
 // GENERAL EXPORT 
 // ============================================
@@ -1355,18 +1965,27 @@ module.exports = {
   verifyMeterNumber, 
   payElectricityBill,
 
-  // TEST FUNCTION EXPORT
-  // testVTPassConnection,
-
   // TV EXPORT
   getTVBouquets,
   verifySmartcard,
   subscribeTVBouquet,
   renewTVSubscription,
 
-  // transaction reference
-  getTransactionByReference,
+  // EDUCATION EXPORT (VTU Africa)
+  getExamProducts,
+  verifyJAMBProfile,
+  purchaseExamPin,
+  
+  // AIRTIME TO CASH EXPORT
+  verifyAirtimeToCash,
+  convertAirtimeToCash,
+  
+  // WEBHOOK EXPORT
+  handleAirtimeToCashWebhook,
+  handleVTUAfricaWebhook,
 
+  // TRANSACTION EXPORT
+  getTransactionByReference,
   getTransactionHistory,
   getTransactionStats,
 };

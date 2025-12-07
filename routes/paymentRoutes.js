@@ -24,6 +24,16 @@ const {
   subscribeTVBouquet,
   renewTVSubscription,
 
+  // Education (VTU Africa)
+  getExamProducts,
+  verifyJAMBProfile,
+  purchaseExamPin,
+  handleVTUAfricaWebhook,
+   verifyAirtimeToCash,
+    convertAirtimeToCash,
+    handleAirtimeToCashWebhook,
+    
+
   getTransactionByReference,
 
 // get transation history
@@ -152,7 +162,7 @@ router.post(
 /**
  * ELECTRICITY PAYMENT ROUTES
  */
-
+ 
 // ✅ Verify Meter Number
 router.post(
   "/verify-meter",
@@ -346,10 +356,17 @@ router.post(
         }
         return true;
       }),
-    body("phone")
+      body("phone")
       .optional()
-      .matches(/^\d{11}$/)
-      .withMessage("Phone number must be 11 digits"),
+      .custom((value) => {
+        // ✅ Accept both formats: 08012345678 or +2348012345678
+        const cleaned = value.replace(/\D/g, ''); // Remove non-digits
+        const isValid = cleaned.length === 11 || cleaned.length === 13;
+        if (!isValid) {
+          throw new Error('Phone number must be 11 digits or include country code');
+        }
+        return true;
+      }),
     body("pin")
       .notEmpty()
       .withMessage("Transaction PIN is required")
@@ -423,6 +440,193 @@ router.post(
   },
   renewTVSubscription
 );
+
+
+// ============================================
+// EDUCATION ROUTES (VTU Africa)
+// ============================================
+
+// Get Available Exam Products
+router.get("/exam-products", protect, getExamProducts);
+
+// Verify JAMB Profile Code
+router.post(
+  "/verify-jamb-profile",
+  protect,
+  [
+    body("profilecode")
+      .notEmpty()
+      .withMessage("Profile code is required")
+      .isNumeric()
+      .withMessage("Profile code must be numeric"),
+    body("product_code")
+      .notEmpty()
+      .withMessage("Product code is required")
+      .isIn(["1", "2"])
+      .withMessage("Product code must be 1 (UTME) or 2 (Direct Entry)"),
+  ],
+  (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: errors.array()[0].msg,
+        errors: errors.array(),
+      });
+    }
+    next();
+  },
+  verifyJAMBProfile
+);
+
+// Purchase Exam PIN
+router.post(
+  "/purchase-exam-pin",
+  protect,
+  [
+    body("service")
+      .notEmpty()
+      .withMessage("Exam service is required")
+      .isIn(["waec", "neco", "nabteb", "jamb"])
+      .withMessage("Invalid exam service"),
+    body("product_code")
+      .notEmpty()
+      .withMessage("Product code is required")
+      .isIn(["1", "2", "3"])
+      .withMessage("Invalid product code"),
+    body("quantity")
+      .notEmpty()
+      .withMessage("Quantity is required")
+      .isInt({ min: 1, max: 5 })
+      .withMessage("Quantity must be between 1 and 5"),
+    body("phone")
+      .notEmpty()
+      .withMessage("Phone number is required")
+      .matches(/^\d{11}$/)
+      .withMessage("Phone number must be 11 digits"),
+    body("pin")
+      .notEmpty()
+      .withMessage("Transaction PIN is required")
+      .matches(/^\d{4}$/)
+      .withMessage("PIN must be 4 digits"),
+    // JAMB specific validations
+    body("profilecode")
+      .if(body("service").equals("jamb"))
+      .notEmpty()
+      .withMessage("Profile code is required for JAMB")
+      .isNumeric()
+      .withMessage("Profile code must be numeric"),
+    body("sender")
+      .if(body("service").equals("jamb"))
+      .notEmpty()
+      .withMessage("Email is required for JAMB")
+      .isEmail()
+      .withMessage("Invalid email format"),
+  ],
+  (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: errors.array()[0].msg,
+        errors: errors.array(),
+      });
+    }
+    next();
+  },
+  purchaseExamPin
+);
+
+
+// ============================================
+// AIRTIME TO CASH ROUTES
+// ============================================
+
+// Verify Service Availability
+router.post(
+  "/verify-airtime-to-cash",
+  protect,
+  [
+    body("network")
+      .notEmpty()
+      .withMessage("Network is required")
+      .isIn(["mtn", "airtel", "glo", "9mobile"])
+      .withMessage("Invalid network provider"),
+  ],
+  (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: errors.array()[0].msg,
+        errors: errors.array(),
+      });
+    }
+    next();
+  },
+  verifyAirtimeToCash
+);
+
+// Convert Airtime to Cash
+router.post(
+  "/convert-airtime-to-cash",
+  protect,
+  [
+    body("network")
+      .notEmpty()
+      .withMessage("Network is required")
+      .isIn(["mtn", "airtel", "glo", "9mobile"])
+      .withMessage("Invalid network provider"),
+    body("senderNumber")
+      .notEmpty()
+      .withMessage("Sender number is required")
+      .matches(/^\d{11}$/)
+      .withMessage("Sender number must be 11 digits"),
+    body("amount")
+      .notEmpty()
+      .withMessage("Amount is required")
+      .isNumeric()
+      .withMessage("Amount must be a number")
+      .custom((value) => {
+        const amount = Number(value);
+        if (amount < 100) {
+          throw new Error("Minimum amount is ₦100");
+        }
+        if (amount > 50000) {
+          throw new Error("Maximum amount is ₦50,000");
+        }
+        return true;
+      }),
+    body("sitePhone")
+      .notEmpty()
+      .withMessage("Site phone number is required")
+      .matches(/^\d{11}$/)
+      .withMessage("Site phone must be 11 digits"),
+    body("pin")
+      .notEmpty()
+      .withMessage("Transaction PIN is required")
+      .matches(/^\d{4}$/)
+      .withMessage("PIN must be 4 digits"),
+  ],
+  (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: errors.array()[0].msg,
+        errors: errors.array(),
+      });
+    }
+    next();
+  },
+  convertAirtimeToCash
+);
+
+// Webhook Handler
+router.post("/webhook/airtime-to-cash", handleAirtimeToCashWebhook);
+
+// VTU Africa Webhook Handler (Optional - for production)
+router.post("/webhook/vtu-africa", handleVTUAfricaWebhook);
 
 
 
