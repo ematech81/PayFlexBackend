@@ -16,7 +16,7 @@ const vtpassApi = axios.create({
   },
 });
 
-// ✅ For GET requests, we need to use public-key instead
+// ✅ For GET requests, we need to use public-key 
 const vtpassApiGet = axios.create({
   baseURL:
     process.env.VTPASS_ENV === "sandbox"
@@ -1946,6 +1946,200 @@ const handleVTUAfricaWebhook = async (req, res) => {
 };
 
 
+
+
+
+// ============================================
+// BETTING SERVICES
+// ============================================
+
+
+/**
+ * Verify Betting Account
+ * Validates betting account/user ID before funding
+ */
+const verifyBettingAccount = async (req, res) => {
+  try {
+    const { service, userid } = req.body;
+
+    if (!service || !userid) {
+      return res.status(400).json({
+        success: false,
+        message: 'Service and User ID are required',
+      });
+    }
+
+    console.log('=== BETTING ACCOUNT VERIFICATION ===');
+    console.log('Service:', service);
+    console.log('User ID:', userid);
+    console.log('====================================');
+
+    // BUILD QUERY PARAMETERS
+    const params = {
+      apikey: process.env.VTU_AFRICA_API_KEY,
+      serviceName: 'Betting',
+      service: service.toLowerCase(),
+      userid: userid,
+    };
+
+    // MAKE GET REQUEST
+    const response = await vtuAfricaApi.get('/merchant-verify/', { params });
+    console.log('✅ VTU Africa Verification Response:', response.data);
+
+    const responseData = response.data;
+    const description = responseData.description;
+
+    // Check if verification successful (code 101)
+    if (responseData.code === 101 || responseData.code === '101' || description?.Status === 'Completed') {
+      return res.json({
+        success: true,
+        message: description?.message || 'Account verified successfully',
+        data: {
+          customerName: description?.Customer,
+          service: description?.Service,
+          userId: description?.UserID,
+          status: description?.Status,
+        },
+      });
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: description?.message || 'Account verification failed',
+      });
+    }
+  } catch (error) {
+    console.error('❌ Verify Betting Account Error:', error.response?.data || error.message);
+    res.status(500).json({
+      success: false,
+      message: error.response?.data?.message || error.message || 'Failed to verify account',
+    });
+  }
+};
+
+/**
+ * Fund Betting Account
+ * Processes betting account funding
+ */
+const fundBettingAccount = async (req, res) => {
+  try {
+    const {
+      service,
+      userid,
+      amount,
+      phone,
+      pin,
+    } = req.body;
+
+    console.log('=== BETTING ACCOUNT FUNDING ===');
+    console.log('Service:', service);
+    console.log('User ID:', userid);
+    console.log('Amount:', amount);
+    console.log('Phone:', phone);
+    console.log('===============================');
+
+    // Validate required fields
+    if (!service || !userid || !amount || !phone || !pin) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: service, userid, amount, phone, pin',
+      });
+    }
+
+    // Verify PIN and user
+    const user = await verifyUserAndPin(req, pin);
+
+    // Validate wallet balance (amount + potential charges)
+    // Assuming 6% charge as per documentation example (30 on 500)
+    const chargePercentage = 6;
+    const charge = Math.ceil((amount * chargePercentage) / 100);
+    const totalAmount = amount + charge;
+    
+    validateWalletBalance(user, totalAmount);
+
+    // Generate unique reference
+    const reference = `ref_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    // Create transaction record
+    const newTransaction = new Transaction({
+      serviceID: `betting_${service}`,
+      phoneNumber: phone,
+      amount: totalAmount,
+      reference,
+      status: 'pending',
+      userId: user._id,
+      type: 'betting',
+      billersCode: userid, // Store betting user ID
+    });
+    await newTransaction.save();
+
+    // BUILD QUERY PARAMETERS
+    const params = {
+      apikey: process.env.VTU_AFRICA_API_KEY,
+      service: service.toLowerCase(),
+      userid: userid,
+      phone: phone,
+      amount: amount.toString(),
+      ref: reference,
+    };
+
+    console.log('✅ VTU Africa Betting Funding Params:', params);
+
+    // MAKE GET REQUEST
+    const response = await vtuAfricaApi.get('/betpay/', { params });
+    console.log('✅ VTU Africa Response:', response.data);
+
+    // Parse the response
+    const responseData = response.data;
+    const description = responseData.description;
+
+    // Update transaction with actual amounts
+    const actualCharge = parseFloat(description?.Charge || charge);
+    const actualAmountCharged = parseFloat(description?.Amount_Charged || totalAmount);
+    
+    newTransaction.amount = actualAmountCharged;
+
+    // Check if successful (code 101, status: Completed)
+    if (responseData.code === 101 || responseData.code === '101' || description?.Status === 'Completed') {
+      newTransaction.status = 'success';
+      newTransaction.transactionId = description?.ReferenceID || reference;
+      
+      // Deduct wallet on success
+      await deductWalletBalance(user, actualAmountCharged);
+      console.log(`✅ Wallet deducted: ₦${actualAmountCharged}`);
+    } else {
+      newTransaction.status = 'failed';
+      newTransaction.failureReason = description?.message || 'Funding failed';
+    }
+
+    newTransaction.response = responseData;
+    await newTransaction.save();
+
+    res.json({
+      success: newTransaction.status === 'success',
+      message: description?.message || 'Transaction processed',
+      data: {
+        reference: newTransaction.reference,
+        transactionId: newTransaction.transactionId,
+        status: newTransaction.status,
+        service: description?.Service || service,
+        userId: description?.UserID || userid,
+        requestAmount: description?.Request_Amount || amount,
+        charge: actualCharge,
+        amountCharged: actualAmountCharged,
+        previousBalance: description?.Previous_Balance,
+        currentBalance: description?.Current_Balance,
+      },
+    });
+  } catch (error) {
+    console.error('❌ Fund Betting Account Error:', error.response?.data || error.message);
+    res.status(500).json({
+      success: false,
+      message: error.response?.data?.message || error.message || 'Failed to fund betting account',
+    });
+  }
+};
+
+
 // ============================================
 // GENERAL EXPORT 
 // ============================================
@@ -1979,6 +2173,11 @@ module.exports = {
   // AIRTIME TO CASH EXPORT
   verifyAirtimeToCash,
   convertAirtimeToCash,
+
+
+  // betting
+  verifyBettingAccount,
+  fundBettingAccount,
   
   // WEBHOOK EXPORT
   handleAirtimeToCashWebhook,

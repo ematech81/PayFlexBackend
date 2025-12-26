@@ -9,6 +9,7 @@ const mongoose = require("mongoose");
 const connectDB = require("./config/db");
 const { apiLimiter } = require("./middleware/rateLimiter");
 const errorHandler = require("./middleware/errorHandler");
+const verificationRoutes = require('./routes/verificationRoutes');
 
 const startServer = async () => {
   try {
@@ -39,6 +40,7 @@ const startServer = async () => {
     app.use("/api/pin", require("./routes/pinRoutes"));
     app.use("/api/payments", require("./routes/paymentRoutes"));
     // app.use('/api/payment', require('./routes/payStackRoutes'));
+    app.use('/api/verification', verificationRoutes);
 
     // 7️⃣ Health endpoint
     app.get("/health", (req, res) => res.json({ ok: true }));

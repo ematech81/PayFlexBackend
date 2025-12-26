@@ -9,7 +9,7 @@ const userSchema = new mongoose.Schema(
     lastName: { type: String, required: true, trim: true },
     email: {
       type: String,
-      sparse: true, // Allow null/undefined for optional email
+      sparse: true,
       lowercase: true,
       trim: true,
       match: [/^\S+@\S+\.\S+$/, 'Please use a valid email'],
@@ -19,33 +19,29 @@ const userSchema = new mongoose.Schema(
       required: true,
       unique: true,
       trim: true,
-      // ✅ FIXED: Now accepts E.164 format (+234...) and Nigerian format (0...)
       match: [/^(\+234[789]\d{9}|0[789]\d{9})$/, 'Please enter a valid Nigerian phone number'],
     },
 
     // Auth
-    passwordHash: { type: String, required: true, select: false }, // Hashed password
-    pinHash: { type: String, select: false }, // 6-digit login PIN
-    transactionPinHash: { type: String, select: false }, // 4-digit transaction PIN
+    passwordHash: { type: String, required: true, select: false },
+    pinHash: { type: String, select: false },
+    transactionPinHash: { type: String, select: false },
 
-    // Verification (consolidated OTP fields)
+    // Verification
     isPhoneVerified: { type: Boolean, default: false },
     isEmailVerified: { type: Boolean, default: false },
-    
-    // Phone OTP
-    phoneOTP: { type: String, select: false }, // Hashed OTP
+
+    phoneOTP: { type: String, select: false },
     phoneOTPExpires: { type: Date, select: false },
-    
-    // Email verification (if needed)
+
     emailVerificationToken: { type: String, select: false },
     emailVerificationExpires: { type: Date, select: false },
 
     // Security
-    devices: [{ type: String }], // Known device IDs
+    devices: [{ type: String }],
     requirePinOnOpen: { type: Boolean, default: true },
-    
-    // PIN Reset
-    resetCode: { type: String, select: false }, // For forgot PIN
+
+    resetCode: { type: String, select: false },
     resetCodeExpires: { type: Date, select: false },
 
     // Wallet & KYC
@@ -56,7 +52,51 @@ const userSchema = new mongoose.Schema(
     roles: { type: [String], default: ['user'] },
     lastLogin: { type: Date },
     isActive: { type: Boolean, default: true },
+
+    // NIN Verification
+    ninVerification: {
+      nin: { type: String, select: false },
+      firstName: String,
+      middleName: String,
+      surname: String,
+      phoneNumber: String,
+      dateOfBirth: String,
+      gender: String,
+      residenceState: String,
+      residenceLGA: String,
+      residenceAddress: { type: String, select: false },
+      photo: { type: String, select: false },
+      reportId: String,
+      verifiedAt: Date,
+      status: { type: String, enum: ['pending', 'verified', 'failed'], default: 'pending' },
+    },
+
+    isNINVerified: { type: Boolean, default: false },
+
+    // BVN Verification
+    bvnVerification: {
+      bvn: { type: String, select: false },
+      firstName: String,
+      middleName: String,
+      surname: String,
+      phoneNumber: String,
+      dateOfBirth: String,
+      gender: String,
+      reportId: String,
+      verifiedAt: Date,
+      status: { type: String, enum: ['pending', 'verified', 'failed'], default: 'pending' },
+    },
+
+    isBVNVerified: { type: Boolean, default: false },
+
+    // Overall verification status
+    verificationStatus: {
+      type: String,
+      enum: ['unverified', 'nin_verified', 'bvn_verified', 'fully_verified'],
+      default: 'unverified',
+    },
   },
+
   {
     timestamps: true,
     toJSON: { virtuals: true },
@@ -64,51 +104,46 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-// Indexes for performance
-
+// Indexes
 userSchema.index({ phoneOTPExpires: 1 }, { expireAfterSeconds: 0, sparse: true });
 userSchema.index({ resetCodeExpires: 1 }, { expireAfterSeconds: 0, sparse: true });
 
-// Virtual: full name
+// Virtual
 userSchema.virtual('fullName').get(function () {
   return `${this.firstName} ${this.lastName}`;
 });
 
-// Pre-save hook: Normalize phone to E.164 format and hash passwords
+// Pre-save hook
 userSchema.pre('save', async function (next) {
   try {
-    // ✅ Normalize phone to E.164 format
+    // Normalize phone
     if (this.isModified('phone') && this.phone) {
       const phone = this.phone.trim();
-      
-      // Convert Nigerian format to E.164
+
       if (!phone.startsWith('+')) {
         if (/^0[789]\d{9}$/.test(phone)) {
-          // 08012345678 → +2348012345678
           this.phone = `+234${phone.slice(1)}`;
         } else if (/^234[789]\d{9}$/.test(phone)) {
-          // 2348012345678 → +2348012345678
           this.phone = `+${phone}`;
         }
       }
     }
 
-    // Hash password (only if modified and not already hashed)
+    // Password hash
     if (this.isModified('passwordHash') && this.passwordHash) {
-      // Check if already hashed (bcrypt hashes start with $2a$ or $2b$)
       if (!this.passwordHash.startsWith('$2')) {
         this.passwordHash = await bcrypt.hash(this.passwordHash, 12);
       }
     }
 
-    // Hash login PIN
+    // PIN hash
     if (this.isModified('pinHash') && this.pinHash) {
       if (!String(this.pinHash).startsWith('$2')) {
         this.pinHash = await bcrypt.hash(String(this.pinHash), 10);
       }
     }
 
-    // Hash transaction PIN
+    // Transaction PIN hash
     if (this.isModified('transactionPinHash') && this.transactionPinHash) {
       if (!String(this.transactionPinHash).startsWith('$2')) {
         this.transactionPinHash = await bcrypt.hash(String(this.transactionPinHash), 10);
@@ -116,29 +151,26 @@ userSchema.pre('save', async function (next) {
     }
 
     next();
-  } catch (error) {
-    next(error);
+  } catch (err) {
+    next(err);
   }
 });
 
-// Instance method: Validate PIN
-userSchema.methods.validatePin = async function (pin) {
+// Methods
+userSchema.methods.validatePin = function (pin) {
   if (!this.pinHash) return false;
-  return await bcrypt.compare(String(pin), this.pinHash);
+  return bcrypt.compare(String(pin), this.pinHash);
 };
 
-// Instance method: Validate Transaction PIN
-userSchema.methods.validateTransactionPin = async function (pin) {
+userSchema.methods.validateTransactionPin = function (pin) {
   if (!this.transactionPinHash) return false;
-  return await bcrypt.compare(String(pin), this.transactionPinHash);
+  return bcrypt.compare(String(pin), this.transactionPinHash);
 };
 
-// Instance method: Check if OTP is valid and not expired
 userSchema.methods.isOTPValid = function () {
   return this.phoneOTP && this.phoneOTPExpires && Date.now() < this.phoneOTPExpires;
 };
 
-// Instance method: Clear OTP after verification
 userSchema.methods.clearOTP = async function () {
   this.phoneOTP = undefined;
   this.phoneOTPExpires = undefined;

@@ -21,6 +21,7 @@ const {
   updateRequirePinOnOpen,
   setPinAfterReset,
   addTestFunds,
+  changeLoginPin
 } = require("../controllers/authController");
 const { protect } = require("../middleware/auth");
 const validate  = require("../middleware/validate");
@@ -281,7 +282,9 @@ router.post(
   updateRequirePinOnOpen
 );
 
-// 10. Transaction PIN
+// =================================
+// set transaction pin logic
+// =================================
 router.post(
   "/set-transaction-pin",
   protect,
@@ -293,6 +296,11 @@ router.post(
   ],
   setTransactionPin
 );
+
+
+// =================================
+// reset login pin logic
+// =================================
 
 router.post(
   "/reset-transaction-pin",
@@ -319,6 +327,26 @@ router.post(
     body("otp").isLength({ min: 6, max: 6 }).withMessage("OTP must be 6 digits"),
   ],
   resetLoginPin
+);
+
+// =================================
+//change login pin logic
+// =================================
+router.post(
+  "/change-login-pin",
+  protect,
+  [
+    body("currentPin")
+      .isLength({ min: 6, max: 6 })
+      .matches(/^\d{6}$/)
+      .withMessage("Current PIN must be 6 digits"),
+    body("newPin")
+      .isLength({ min: 6, max: 6 })
+      .matches(/^\d{6}$/)
+      .withMessage("New PIN must be 6 digits"),
+  ],
+  validate,
+  changeLoginPin
 );
 
 

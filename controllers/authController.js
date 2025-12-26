@@ -998,6 +998,96 @@ exports.verifyLoginPin = async (req, res) => {
 
 
 
+
+/**
+ * Change Login PIN
+ * @route POST /api/auth/change-login-pin
+ * @access Private
+ */
+exports.changeLoginPin = async (req, res) => {
+  try {
+    const { currentPin, newPin } = req.body;
+    const userId = req.user.id || req.user._id;
+
+    console.log('=== CHANGE LOGIN PIN REQUEST ===');
+    console.log('User ID:', userId);
+    console.log('================================');
+
+    // Validate input
+    if (!currentPin || !/^\d{6}$/.test(currentPin)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Current PIN must be a valid 6-digit number',
+      });
+    }
+
+    if (!newPin || !/^\d{6}$/.test(newPin)) {
+      return res.status(400).json({
+        success: false,
+        message: 'New PIN must be a valid 6-digit number',
+      });
+    }
+
+    // Check if new PIN is same as current
+    if (currentPin === newPin) {
+      return res.status(400).json({
+        success: false,
+        message: 'New PIN must be different from current PIN',
+      });
+    }
+
+    // Find user with pinHash field (like your login flow)
+    const user = await User.findById(userId).select('+pinHash');
+    
+    if (!user) {
+      console.log('❌ User not found for userId:', userId);
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    // Check if user has a login PIN set
+    if (!user.pinHash) {
+      console.log('❌ No PIN set for userId:', userId);
+      return res.status(400).json({
+        success: false,
+        message: 'No login PIN set for this account',
+      });
+    }
+
+    // Verify current PIN (same logic as your verifyLoginPin)
+    const isMatch = await bcrypt.compare(String(currentPin), user.pinHash);
+    if (!isMatch) {
+      console.log('❌ Invalid current PIN for userId:', userId);
+      return res.status(400).json({
+        success: false,
+        message: 'Current PIN is incorrect',
+      });
+    }
+
+    // Hash and save new PIN (convert to string like your setPin does)
+    user.pinHash = String(newPin);
+    await user.save(); // Pre-save hook will handle hashing
+
+    console.log('✅ Login PIN changed successfully for user:', userId);
+
+    res.json({
+      success: true,
+      message: 'Login PIN changed successfully',
+    });
+  } catch (error) {
+    console.error('❌ Change Login PIN Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while changing login PIN',
+    });
+  }
+};
+
+
+
+
 // transaction PIN verification middleware
 
 exports.setTransactionPin = async (req, res) => {
@@ -1283,54 +1373,5 @@ exports.me = async (req, res, next) => {
     next(e);
   }
 };
-
-
-// /**
-//  * GET /api/auth/me
-//  * Auth required (protect)
-//  */
-// exports.me = async (req, res, next) => {
-//   try {
-  
-//    // Fetch fresh user data from database
-//     const u = await User.findById(req.user.id || req.user._id)
-//       .select('-password')  // Exclude password but NOT transactionPinHash
-//       .lean();  // Convert to plain object for better performance
-    
-//     if (!u) {
-//       return res.status(404).json({
-//         success: false,
-//         message: "User not found"
-//       });
-//     }
-
-//     // Log for debugging
-//     console.log('📡 /me endpoint - Fresh DB query:', {
-//       userId: u._id,
-//       hasTransactionPinHash: !!u.transactionPinHash,
-//       walletBalance: u.walletBalance
-//     });
-    
-//     // Return fresh data with PIN status
-//     res.json({
-//       success: true,
-//       user: {
-//         id: u._id,
-//         firstName: u.firstName,
-//         lastName: u.lastName,
-//         email: u.email,
-//         phone: u.phone,
-//         isPhoneVerified: u.isPhoneVerified,
-//         kyc: u.kyc,
-//         walletBalance: u.walletBalance || 0,
-//         roles: u.roles,
-//       },
-//       transactionPinSet: !!u.transactionPinHash  // ← Now reads from fresh DB data!
-//     });
-//   } catch (e) {
-//     console.error('❌ /me endpoint error:', e);
-//     next(e);
-//   }
-// };
 
 

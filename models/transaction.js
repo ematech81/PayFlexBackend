@@ -41,7 +41,18 @@ const transactionSchema = new mongoose.Schema({
   // Transaction type
   type: {
     type: String,
-    enum: ["airtime", "data", "electricity", "tv", "education", "other"],
+    enum: ["airtime",
+       "data", 
+       "electricity",
+        "tv", 
+        "education",
+         "other", 
+       "nin_verification",        
+      "nin_phone_search",         
+      "nin_tracking_search",      
+      "bvn_verification",         
+    "bvn_phone_search", 
+  ],
     default: "airtime",
     index: true,
   },
@@ -114,6 +125,21 @@ const transactionSchema = new mongoose.Schema({
   updatedAt: {
     type: Date,
     default: Date.now,
+  },
+  verificationData: {
+    nin: String,
+    bvn: String,
+    firstName: String,
+    middleName: String,
+    surname: String,
+    phoneNumber: String,
+    dateOfBirth: String,
+    gender: String,
+    residenceState: String,
+    residenceLGA: String,
+    residenceAddress: String,
+    photo: String, // Base64 image
+    reportId: String,
   },
 }, {
   timestamps: true, // Automatically manage createdAt and updatedAt

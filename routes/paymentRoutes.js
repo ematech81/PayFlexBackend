@@ -33,6 +33,9 @@ const {
     convertAirtimeToCash,
     handleAirtimeToCashWebhook,
     
+    // betting
+    verifyBettingAccount,
+    fundBettingAccount,
 
   getTransactionByReference,
 
@@ -624,6 +627,137 @@ router.post(
 
 // Webhook Handler
 router.post("/webhook/airtime-to-cash", handleAirtimeToCashWebhook);
+
+
+
+
+// ============================================
+// BETTING ROUTES
+// ============================================
+
+// Verify Betting Account
+// ============================================
+// BETTING ROUTES
+// ============================================
+
+// Verify Betting Account
+router.post(
+  "/verify-betting-account",
+  protect,
+  [
+    body("service")
+      .notEmpty()
+      .withMessage("Betting service is required")
+      .isIn([
+        "bet9ja", 
+        "betking", 
+        "1xbet", 
+        "sportybet", 
+        "nairabet", 
+        "betway", 
+        "merrybet",
+        "betbiga",
+        "naijabet",
+        "bangbet",
+        "melbet",
+        "livescorebet",
+        "naira-million",
+        "cloudbet",
+        "paripesa",
+        "mylottoHub"
+      ])
+      .withMessage("Invalid betting service"),
+    body("userid")
+      .notEmpty()
+      .withMessage("User ID is required")
+      .isLength({ min: 3, max: 20 })
+      .withMessage("User ID must be between 3 and 20 characters"),
+  ],
+  (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: errors.array()[0].msg,
+        errors: errors.array(),
+      });
+    }
+    next();
+  },
+  verifyBettingAccount
+);
+
+// Fund Betting Account
+router.post(
+  "/fund-betting-account",
+  protect,
+  [
+    body("service")
+      .notEmpty()
+      .withMessage("Betting service is required")
+      .isIn([
+        "bet9ja", 
+        "betking", 
+        "1xbet", 
+        "sportybet", 
+        "nairabet", 
+        "betway", 
+        "merrybet",
+        "betbiga",
+        "naijabet",
+        "bangbet",
+        "melbet",
+        "livescorebet",
+        "naira-million",
+        "cloudbet",
+        "paripesa",
+        "mylottoHub"
+      ])
+      .withMessage("Invalid betting service"),
+    body("userid")
+      .notEmpty()
+      .withMessage("User ID is required")
+      .isLength({ min: 3, max: 20 })
+      .withMessage("User ID must be between 3 and 20 characters"),
+    body("amount")
+      .notEmpty()
+      .withMessage("Amount is required")
+      .isNumeric()
+      .withMessage("Amount must be a number")
+      .custom((value) => {
+        const amount = Number(value);
+        if (amount < 100) {
+          throw new Error("Minimum amount is ₦100");
+        }
+        if (amount > 500000) {
+          throw new Error("Maximum amount is ₦500,000");
+        }
+        return true;
+      }),
+    body("phone")
+      .notEmpty()
+      .withMessage("Phone number is required")
+      .matches(/^\d{11}$/)
+      .withMessage("Phone number must be 11 digits"),
+    body("pin")
+      .notEmpty()
+      .withMessage("Transaction PIN is required")
+      .matches(/^\d{4}$/)
+      .withMessage("PIN must be 4 digits"),
+  ],
+  (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: errors.array()[0].msg,
+        errors: errors.array(),
+      });
+    }
+    next();
+  },
+  fundBettingAccount
+);
 
 // VTU Africa Webhook Handler (Optional - for production)
 router.post("/webhook/vtu-africa", handleVTUAfricaWebhook);
