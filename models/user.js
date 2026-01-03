@@ -95,6 +95,44 @@ const userSchema = new mongoose.Schema(
       enum: ['unverified', 'nin_verified', 'bvn_verified', 'fully_verified'],
       default: 'unverified',
     },
+
+    // ============================================
+    // REFERRAL FIELDS
+    // ============================================
+    referralCode: {
+      type: String,
+      unique: true,
+      sparse: true,
+      uppercase: true,
+      trim: true,
+    },
+
+    referralLink: {
+      type: String,
+      trim: true,
+    },
+
+    totalReferrals: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    referralEarnings: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    referredBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+    },
+
+    claimedMilestones: {
+      type: [Number],
+      default: [],
+    },
   },
 
   {
@@ -107,6 +145,8 @@ const userSchema = new mongoose.Schema(
 // Indexes
 userSchema.index({ phoneOTPExpires: 1 }, { expireAfterSeconds: 0, sparse: true });
 userSchema.index({ resetCodeExpires: 1 }, { expireAfterSeconds: 0, sparse: true });
+userSchema.index({ referralCode: 1 }, { unique: true, sparse: true });
+userSchema.index({ totalReferrals: -1 }); // For leaderboard queries
 
 // Virtual
 userSchema.virtual('fullName').get(function () {

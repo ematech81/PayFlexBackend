@@ -52,6 +52,8 @@ const transactionSchema = new mongoose.Schema({
       "nin_tracking_search",      
       "bvn_verification",         
     "bvn_phone_search", 
+    'transport_booking',
+    'transport_refund',
   ],
     default: "airtime",
     index: true,
