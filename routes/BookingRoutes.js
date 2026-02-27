@@ -54,6 +54,8 @@ router.get('/reference/:reference', protect, getBookingByReference);
  */
 router.post('/:bookingId/cancel', protect, cancelBooking);
 
+
+
 // ============================================
 // PASSENGER PROFILE ROUTES
 // ============================================
@@ -71,5 +73,10 @@ router.get('/passengers/profiles', protect, getPassengerProfiles);
  * @access Private
  */
 router.get('/passengers/search/:phone', protect, searchPassengerByPhone);
+
+
+
+
+
 
 module.exports = router;

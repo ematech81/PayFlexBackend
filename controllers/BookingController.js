@@ -1,9 +1,12 @@
-// controllers/bookingController.js
+
+const Transaction = require('../models/Transaction');
+const User = require('../models/User');
 const Booking = require('../models/booking');
-const PassengerProfile = require('../models/PassengerProfile');
-const Transaction = require('../models/transaction');
-const User = require('../models/user');
-// const travuService = require('../services/travuAPI'); // Real API when ready
+const { 
+  savePassengerProfiles, 
+  getUserProfiles, 
+  searchPassengerByPhone: searchPassenger 
+} = require('../util/passengerProfile');
 
 // ============================================
 // CREATE BOOKING
@@ -369,66 +372,48 @@ exports.cancelBooking = async (req, res) => {
   }
 };
 
+
 // ============================================
-// GET PASSENGER PROFILES
+// PASSENGER PROFILE CONTROLLERS
 // ============================================
 
 exports.getPassengerProfiles = async (req, res) => {
   try {
     const userId = req.user._id;
-
-    console.log('👥 Getting passenger profiles for user:', userId);
-
-    let passengerProfile = await PassengerProfile.findOne({ userId });
-
-    if (!passengerProfile) {
-      return res.json({
-        success: true,
-        data: { profiles: [] },
-      });
-    }
+    const profiles = await getUserProfiles(userId);
 
     res.json({
       success: true,
-      data: {
-        profiles: passengerProfile.profiles,
-      },
+      data: profiles,
     });
   } catch (error) {
-    console.error('❌ Get Passenger Profiles Error:', error.message);
+    console.error('❌ Error getting passenger profiles:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to get passenger profiles',
+      error: error.message,
     });
   }
 };
-
-// ============================================
-// SEARCH PASSENGER BY PHONE
-// ============================================
 
 exports.searchPassengerByPhone = async (req, res) => {
   try {
     const userId = req.user._id;
     const { phone } = req.params;
 
-    console.log('🔍 Searching passenger by phone:', phone);
-
-    const passengerProfile = await PassengerProfile.findOne({ userId });
-
-    if (!passengerProfile) {
-      return res.status(404).json({
+    if (!phone) {
+      return res.status(400).json({
         success: false,
-        message: 'No saved passengers found',
+        message: 'Phone number is required',
       });
     }
 
-    const profile = passengerProfile.profiles.find((p) => p.phone === phone);
+    const profile = await searchPassenger(userId, phone);
 
     if (!profile) {
       return res.status(404).json({
         success: false,
-        message: 'Passenger profile not found',
+        message: 'No saved passenger found with this phone number',
       });
     }
 
@@ -437,43 +422,11 @@ exports.searchPassengerByPhone = async (req, res) => {
       data: profile,
     });
   } catch (error) {
-    console.error('❌ Search Passenger Error:', error.message);
+    console.error('❌ Error searching passenger:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to search passenger',
+      error: error.message,
     });
   }
 };
-
-// ============================================
-// HELPER FUNCTIONS
-// ============================================
-
-async function savePassengerProfiles(userId, passengers) {
-  try {
-    let passengerProfile = await PassengerProfile.findOne({ userId });
-
-    if (!passengerProfile) {
-      passengerProfile = new PassengerProfile({ userId, profiles: [] });
-    }
-
-    // Save each passenger profile
-    passengers.forEach((passenger) => {
-      passengerProfile.addOrUpdateProfile({
-        fullName: passenger.fullName,
-        phone: passenger.phone,
-        email: passenger.email,
-        age: passenger.age,
-        gender: passenger.gender,
-        title: passenger.title,
-        nextOfKin: passenger.nextOfKin,
-        nextOfKinPhone: passenger.nextOfKinPhone,
-      });
-    });
-
-    await passengerProfile.save();
-    console.log('✅ Passenger profiles saved');
-  } catch (error) {
-    console.error('❌ Save Passenger Profiles Error:', error.message);
-  }
-}

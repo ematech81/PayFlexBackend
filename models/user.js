@@ -101,8 +101,8 @@ const userSchema = new mongoose.Schema(
     // ============================================
     referralCode: {
       type: String,
-      unique: true,
-      sparse: true,
+      // unique: true,
+      // sparse: true,
       uppercase: true,
       trim: true,
     },
@@ -217,4 +217,5 @@ userSchema.methods.clearOTP = async function () {
   await this.save();
 };
 
-module.exports = mongoose.model('User', userSchema);
+// module.exports = mongoose.model('User', userSchema);
+module.exports = mongoose.models.User || mongoose.model("User",  userSchema);

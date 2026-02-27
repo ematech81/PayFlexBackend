@@ -41,20 +41,23 @@ const transactionSchema = new mongoose.Schema({
   // Transaction type
   type: {
     type: String,
-    enum: ["airtime",
-       "data", 
-       "electricity",
-        "tv", 
-        "education",
-         "other", 
-       "nin_verification",        
+    enum: [
+      "airtime",
+      "data", 
+      "electricity",
+      "tv", 
+      "education",
+      "other", 
+      "nin_verification",        
       "nin_phone_search",         
       "nin_tracking_search",      
       "bvn_verification",         
-    "bvn_phone_search", 
-    'transport_booking',
-    'transport_refund',
-  ],
+      "bvn_phone_search", 
+      "transport_booking",
+      "transport_refund",
+      "flight_booking",      
+      "flight_refund",   
+    ],
     default: "airtime",
     index: true,
   },
@@ -251,4 +254,8 @@ transactionSchema.statics.getStats = async function(userId, period = 'month') {
   ]);
 };
 
-module.exports = mongoose.model("Transaction", transactionSchema);
+// ============================================
+// ✅ EXPORT WITH OVERWRITE PROTECTION
+// ============================================
+// This prevents "Cannot overwrite Transaction model" error
+module.exports = mongoose.models.Transaction || mongoose.model("Transaction", transactionSchema);

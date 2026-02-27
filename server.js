@@ -12,6 +12,7 @@ const errorHandler = require("./middleware/errorHandler");
 const verificationRoutes = require('./routes/verificationRoutes');
 const referralRoutes = require('./routes/referralRoutes');
 const bookingRoutes = require('./routes/bookingRoutes');
+const flightRoutes = require('./routes/flightRoutes');
 
 
 
@@ -47,6 +48,7 @@ const startServer = async () => {
     app.use('/api/verification', verificationRoutes);
     app.use('/api/referral', referralRoutes);
     app.use('/api/bookings', bookingRoutes);
+    app.use('/api/flights', flightRoutes);
 
     // 7️⃣ Health endpoint
     app.get("/health", (req, res) => res.json({ ok: true }));

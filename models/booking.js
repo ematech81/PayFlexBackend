@@ -160,4 +160,5 @@ bookingSchema.methods.canBeCancelled = function () {
   return departureDateTime > twoHoursFromNow;
 };
 
-module.exports = mongoose.model('Booking', bookingSchema);
+
+module.exports = mongoose.models.Booking || mongoose.model("Booking", bookingSchema);

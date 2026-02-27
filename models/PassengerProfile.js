@@ -83,4 +83,5 @@ passengerProfileSchema.methods.addOrUpdateProfile = function (profileData) {
   }
 };
 
-module.exports = mongoose.model('PassengerProfile', passengerProfileSchema);
+
+module.exports = mongoose.models.PassengerProfile || mongoose.model("PassengerProfile", passengerProfileSchema);
