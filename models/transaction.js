@@ -1,15 +1,14 @@
 const mongoose = require("mongoose");
 
 const transactionSchema = new mongoose.Schema({
-  // Core transaction fields
-  serviceID: {
-    type: String,
+  // ============================================
+  // CORE FIELDS (All Transaction Types)
+  // ============================================
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
     required: true,
     index: true,
-  },
-  phoneNumber: {
-    type: String,
-    required: true,
   },
   amount: {
     type: Number,
@@ -17,52 +16,64 @@ const transactionSchema = new mongoose.Schema({
   },
   reference: {
     type: String,
-    unique: true,
+    unique: true,   // unique already creates the index — no index:true needed
     required: true,
-    index: true,
   },
-  request_id: {
-    type: String,
-    index: true,
-  },
-  
-  // Transaction status
   status: {
     type: String,
-    enum: ["pending", "success", "failed"],
+    enum: ["pending", "processing", "success", "failed", "completed", "refunded"],
     default: "pending",
     index: true,
   },
-  transactionId: {
-    type: String,
-    index: true,
-  },
-  
-  // Transaction type
   type: {
     type: String,
     enum: [
+      // VTPass services
       "airtime",
       "data", 
       "electricity",
       "tv", 
       "education",
       "other", 
+      // Verification services
       "nin_verification",        
       "nin_phone_search",         
       "nin_tracking_search",      
       "bvn_verification",         
-      "bvn_phone_search", 
+      "bvn_phone_search",
+      // Booking services
       "transport_booking",
       "transport_refund",
       "flight_booking",      
-      "flight_refund",   
+      "flight_refund",
+      // Wallet operations
+      "wallet_topup",
+      "wallet_withdrawal",
+      "withdrawal",
+      // Referral bonuses
+      "referral_bonus",
+      // VTU Africa services
+      "airtime_conversion",
+      "betting",
+      // Future
+      "p2p_transfer",
     ],
-    default: "airtime",
+    required: true,
     index: true,
   },
   
-  // Service-specific fields
+  // ============================================
+  // VTPASS UTILITY FIELDS (Optional)
+  // ============================================
+  serviceID: {
+    type: String,
+    required: false, // ✅ Changed from true - Only for VTPass services
+    index: true,
+  },
+  phoneNumber: {
+    type: String,
+    required: false, // ✅ Changed from true - Only for VTPass services
+  },
   billersCode: {
     type: String,
     // For electricity: meter number
@@ -76,8 +87,6 @@ const transactionSchema = new mongoose.Schema({
     // For TV: bouquet code
     // For education: exam type
   },
-  
-  // TV subscription specific
   subscription_type: {
     type: String,
     enum: ["change", "renew"],
@@ -92,45 +101,60 @@ const transactionSchema = new mongoose.Schema({
     type: String,
     // Token/code returned for certain services (e.g., TV, education)
   },
-  
-  // User reference
-  userId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
-    required: true,
+  request_id: {
+    type: String,
     index: true,
   },
   
-  // Response data
+  // ============================================
+  // BOOKING FIELDS (Optional - For Flight/Transport)
+  // ============================================
+  bookingType: {
+    type: String,
+    enum: ["flight", "transport"],
+    // Only for booking transactions
+  },
+  bookingReference: {
+    type: String,
+    // indexed via transactionSchema.index() below
+  },
+  bookingId: {
+    type: mongoose.Schema.Types.ObjectId,
+    // Reference to the actual booking document
+  },
+  
+  // ============================================
+  // PAYMENT METHOD
+  // ============================================
+  paymentMethod: {
+    type: String,
+    enum: ["wallet", "card", "bank_transfer", "ussd", "paystack", "flutterwave"],
+    default: "wallet",
+  },
+  
+  // ============================================
+  // TRANSACTION IDENTIFIERS
+  // ============================================
+  transactionId: {
+    type: String,
+    // indexed via transactionSchema.index() below
+  },
+  
+  // ============================================
+  // RESPONSE & ERROR DATA
+  // ============================================
   response: {
     type: Object,
-    // Full VTPass API response
+    // Full API response (VTPass, Amadeus, etc.)
   },
   failureReason: {
     type: String,
     // Reason for failed transactions
   },
   
-  // Metadata
-  commission: {
-    type: Number,
-    default: 0,
-  },
-  discount: {
-    type: Number,
-    default: 0,
-  },
-  
-  // Timestamps
-  createdAt: {
-    type: Date,
-    default: Date.now,
-    index: true,
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now,
-  },
+  // ============================================
+  // VERIFICATION DATA (Optional - For NIN/BVN)
+  // ============================================
   verificationData: {
     nin: String,
     bvn: String,
@@ -146,37 +170,147 @@ const transactionSchema = new mongoose.Schema({
     photo: String, // Base64 image
     reportId: String,
   },
+  
+  // ============================================
+  // FINANCIAL METADATA
+  // ============================================
+  commission: {
+    type: Number,
+    default: 0,
+  },
+  discount: {
+    type: Number,
+    default: 0,
+  },
+  currency: {
+    type: String,
+    default: "NGN",
+  },
+  
+  // ============================================
+  // BOOKING METADATA (Optional)
+  // ============================================
+  metadata: {
+    type: Object,
+    default: {},
+    // For bookings: route, airline, seats, etc.
+    // For utilities: additional service details
+  },
+  
+  // ============================================
+  // TIMESTAMPS
+  // ============================================
+  paidAt: {
+    type: Date,
+    // When payment was actually processed
+  },
+  refundedAt: {
+    type: Date,
+    // When refund was processed (if applicable)
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now,
+    index: true,
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now,
+  },
 }, {
   timestamps: true, // Automatically manage createdAt and updatedAt
 });
 
-// Indexes for common queries
+// ============================================
+// INDEXES
+// ============================================
 transactionSchema.index({ userId: 1, createdAt: -1 });
 transactionSchema.index({ status: 1, type: 1 });
 transactionSchema.index({ reference: 1, userId: 1 });
+transactionSchema.index({ bookingReference: 1 });
+transactionSchema.index({ transactionId: 1 });
 
-// Pre-save middleware to update updatedAt
+// ============================================
+// PRE-SAVE MIDDLEWARE
+// ============================================
 transactionSchema.pre('save', function(next) {
   this.updatedAt = Date.now();
+  
+  // Auto-set paidAt when status becomes success/completed
+  if (this.isModified('status') && 
+      (this.status === 'success' || this.status === 'completed') && 
+      !this.paidAt) {
+    this.paidAt = new Date();
+  }
+  
+  // Auto-set refundedAt when status becomes refunded
+  if (this.isModified('status') && this.status === 'refunded' && !this.refundedAt) {
+    this.refundedAt = new Date();
+  }
+  
   next();
 });
 
-// Instance method to check if transaction is successful
+// ============================================
+// VALIDATION MIDDLEWARE
+// ============================================
+transactionSchema.pre('validate', function(next) {
+  // Validate VTPass transactions
+  const vtpassTypes = ['airtime', 'data', 'electricity', 'tv', 'education'];
+  if (vtpassTypes.includes(this.type)) {
+    if (!this.serviceID) {
+      return next(new Error('serviceID is required for VTPass transactions'));
+    }
+    if (!this.phoneNumber) {
+      return next(new Error('phoneNumber is required for VTPass transactions'));
+    }
+  }
+  
+  // Validate booking transactions
+  const bookingTypes = ['flight_booking', 'transport_booking', 'flight_refund', 'transport_refund'];
+  if (bookingTypes.includes(this.type)) {
+    if (!this.bookingReference) {
+      return next(new Error('bookingReference is required for booking transactions'));
+    }
+  }
+  
+  next();
+});
+
+// ============================================
+// INSTANCE METHODS
+// ============================================
 transactionSchema.methods.isSuccessful = function() {
-  return this.status === 'success';
+  return this.status === 'success' || this.status === 'completed';
 };
 
-// Instance method to check if transaction is pending
 transactionSchema.methods.isPending = function() {
   return this.status === 'pending';
 };
 
-// Instance method to check if transaction is failed
 transactionSchema.methods.isFailed = function() {
   return this.status === 'failed';
 };
 
-// Static method to get user transactions
+transactionSchema.methods.isRefunded = function() {
+  return this.status === 'refunded';
+};
+
+transactionSchema.methods.isBookingTransaction = function() {
+  const bookingTypes = ['flight_booking', 'transport_booking', 'flight_refund', 'transport_refund'];
+  return bookingTypes.includes(this.type);
+};
+
+transactionSchema.methods.isVTPassTransaction = function() {
+  const vtpassTypes = ['airtime', 'data', 'electricity', 'tv', 'education'];
+  return vtpassTypes.includes(this.type);
+};
+
+// ============================================
+// STATIC METHODS
+// ============================================
+
+// Get user transactions with filters
 transactionSchema.statics.getUserTransactions = function(userId, options = {}) {
   const {
     limit = 50,
@@ -204,12 +338,17 @@ transactionSchema.statics.getUserTransactions = function(userId, options = {}) {
     .lean();
 };
 
-// Static method to get transaction by reference
+// Get transaction by reference
 transactionSchema.statics.getByReference = function(reference) {
   return this.findOne({ reference }).lean();
 };
 
-// Static method to get transaction statistics
+// Get transaction by booking reference
+transactionSchema.statics.getByBookingReference = function(bookingReference) {
+  return this.findOne({ bookingReference }).lean();
+};
+
+// Get transaction statistics
 transactionSchema.statics.getStats = async function(userId, period = 'month') {
   const now = new Date();
   let startDate;
@@ -234,7 +373,7 @@ transactionSchema.statics.getStats = async function(userId, period = 'month') {
   return this.aggregate([
     {
       $match: {
-        userId: mongoose.Types.ObjectId(userId),
+        userId: new mongoose.Types.ObjectId(userId),
         createdAt: { $gte: startDate },
       },
     },
@@ -244,7 +383,16 @@ transactionSchema.statics.getStats = async function(userId, period = 'month') {
         count: { $sum: 1 },
         totalAmount: { $sum: '$amount' },
         successCount: {
-          $sum: { $cond: [{ $eq: ['$status', 'success'] }, 1, 0] },
+          $sum: { 
+            $cond: [
+              { $or: [
+                { $eq: ['$status', 'success'] },
+                { $eq: ['$status', 'completed'] }
+              ]}, 
+              1, 
+              0
+            ] 
+          },
         },
         failedCount: {
           $sum: { $cond: [{ $eq: ['$status', 'failed'] }, 1, 0] },
@@ -254,8 +402,72 @@ transactionSchema.statics.getStats = async function(userId, period = 'month') {
   ]);
 };
 
+// Create VTPass transaction
+transactionSchema.statics.createVTPassTransaction = function(data) {
+  const {
+    userId,
+    serviceID,
+    phoneNumber,
+    amount,
+    reference,
+    type,
+    billersCode,
+    variation_code,
+    subscription_type,
+    quantity,
+    request_id,
+  } = data;
+
+  return this.create({
+    userId,
+    serviceID,
+    phoneNumber,
+    amount,
+    reference,
+    type,
+    billersCode,
+    variation_code,
+    subscription_type,
+    quantity,
+    request_id,
+    status: 'pending',
+    paymentMethod: 'wallet',
+  });
+};
+
+// Create booking transaction
+transactionSchema.statics.createBookingTransaction = function(data) {
+  const {
+    userId,
+    bookingType,
+    bookingReference,
+    bookingId,
+    amount,
+    currency,
+    paymentMethod,
+    metadata,
+  } = data;
+
+  const type = bookingType === 'flight' ? 'flight_booking' : 'transport_booking';
+  const reference = `${type.toUpperCase()}-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
+
+  return this.create({
+    userId,
+    type,
+    bookingType,
+    bookingReference,
+    bookingId,
+    amount,
+    currency: currency || 'NGN',
+    reference,
+    status: 'completed', // ✅ Booking transactions are completed immediately
+    paymentMethod: paymentMethod || 'wallet',
+    metadata: metadata || {},
+    paidAt: new Date(),
+  });
+};
+
 // ============================================
-// ✅ EXPORT WITH OVERWRITE PROTECTION
+// EXPORT WITH OVERWRITE PROTECTION
 // ============================================
-// This prevents "Cannot overwrite Transaction model" error
 module.exports = mongoose.models.Transaction || mongoose.model("Transaction", transactionSchema);

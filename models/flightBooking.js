@@ -15,7 +15,7 @@ const flightBookingSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       required: true,
-      index: true,
+      // indexed via compound { userId, createdAt } below
     },
 
     bookingReference: {
@@ -39,12 +39,12 @@ const flightBookingSchema = new mongoose.Schema(
 
     amadeusOrderId: {
       type: String,
-      index: true,
+      // indexed via flightBookingSchema.index() below
     },
 
     pnr: {
       type: String, // Passenger Name Record
-      index: true,
+      // indexed via flightBookingSchema.index() below
     },
 
     // ============================================
@@ -318,7 +318,7 @@ const flightBookingSchema = new mongoose.Schema(
 // INDEXES
 // ============================================
 
-flightBookingSchema.index({ bookingReference: 1 });
+// bookingReference already indexed by unique:true on the field definition
 flightBookingSchema.index({ userId: 1, createdAt: -1 });
 flightBookingSchema.index({ status: 1, createdAt: -1 });
 flightBookingSchema.index({ amadeusOrderId: 1 });

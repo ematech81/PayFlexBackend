@@ -572,37 +572,6 @@ const verfyTransactionPin = async (req, res) => {
   }
 };
 
-// /**
-//  * Test VTPass Connection
-//  */
-// const testVTPassConnection = async (req, res) => {
-//   try {
-//     console.log('🔑 Testing VTPass credentials...');
-//     console.log('API Key:', process.env.VTPASS_API_KEY);
-//     console.log('Secret Key:', process.env.VTPASS_SECRET_KEY ? '✅ Set' : '❌ Missing');
-//     console.log('Public Key:', process.env.VTPASS_PUBLIC_KEY ? '✅ Set' : '❌ Missing');
-//     console.log('Environment:', process.env.VTPASS_ENV);
-    
-//     // ✅ Use vtpassApiGet for balance check (GET request)
-//     const response = await vtpassApiGet.get('/balance');
-    
-//     console.log('✅ VTPass connection successful!');
-//     console.log('Balance:', response.data);
-    
-//     res.json({
-//       success: true,
-//       message: 'VTPass credentials are valid',
-//       balance: response.data,
-//     });
-//   } catch (error) {
-//     console.error('❌ VTPass connection failed:', error.response?.data || error.message);
-//     res.status(500).json({
-//       success: false,
-//       message: 'VTPass credentials invalid',
-//       error: error.response?.data || error.message,
-//     });
-//   }
-// };
 
 
 // ==========================
@@ -1442,6 +1411,10 @@ const getExamProducts = async (req, res) => {
  */
 const verifyJAMBProfile = async (req, res) => {
   try {
+    if (!process.env.VTU_AFRICA_API_KEY) {
+      return res.status(503).json({ success: false, message: 'Service temporarily unavailable', code: 'VTU_AFRICA_NOT_CONFIGURED' });
+    }
+
     const { profilecode, product_code } = req.body;
 
     if (!profilecode || !product_code) {
@@ -1507,6 +1480,10 @@ const verifyJAMBProfile = async (req, res) => {
  */
 const purchaseExamPin = async (req, res) => {
   try {
+    if (!process.env.VTU_AFRICA_API_KEY) {
+      return res.status(503).json({ success: false, message: 'Service temporarily unavailable', code: 'VTU_AFRICA_NOT_CONFIGURED' });
+    }
+
     const {
       service,
       product_code,
@@ -1581,14 +1558,15 @@ const purchaseExamPin = async (req, res) => {
       service,
       product_code,
       quantity,
+      phone,
       ref: reference,
+      webhookURL: process.env.VTU_AFRICA_WEBHOOK_URL || '',
     };
 
     // Add JAMB specific fields as query params
     if (isJAMB) {
       params.profilecode = profilecode;
       params.sender = sender;
-      params.phone = phone;
     }
 
     console.log('✅ VTU Africa Exam PIN Params:', params);
@@ -1611,7 +1589,7 @@ const purchaseExamPin = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'Service temporarily unavailable. Please try again later.',
-        vtpassError: description?.message,
+        vtuAfricaError: description?.message,
       });
     }
 
@@ -1668,6 +1646,10 @@ const purchaseExamPin = async (req, res) => {
  */
 const verifyAirtimeToCash = async (req, res) => {
   try {
+    if (!process.env.VTU_AFRICA_API_KEY) {
+      return res.status(503).json({ success: false, message: 'Service temporarily unavailable', code: 'VTU_AFRICA_NOT_CONFIGURED' });
+    }
+
     const { network } = req.body;
 
     if (!network) {
@@ -1727,6 +1709,10 @@ const verifyAirtimeToCash = async (req, res) => {
  */
 const convertAirtimeToCash = async (req, res) => {
   try {
+    if (!process.env.VTU_AFRICA_API_KEY) {
+      return res.status(503).json({ success: false, message: 'Service temporarily unavailable', code: 'VTU_AFRICA_NOT_CONFIGURED' });
+    }
+
     const {
       network,
       senderNumber,
@@ -1960,6 +1946,10 @@ const handleVTUAfricaWebhook = async (req, res) => {
  */
 const verifyBettingAccount = async (req, res) => {
   try {
+    if (!process.env.VTU_AFRICA_API_KEY) {
+      return res.status(503).json({ success: false, message: 'Service temporarily unavailable', code: 'VTU_AFRICA_NOT_CONFIGURED' });
+    }
+
     const { service, userid } = req.body;
 
     if (!service || !userid) {
@@ -2022,6 +2012,10 @@ const verifyBettingAccount = async (req, res) => {
  */
 const fundBettingAccount = async (req, res) => {
   try {
+    if (!process.env.VTU_AFRICA_API_KEY) {
+      return res.status(503).json({ success: false, message: 'Service temporarily unavailable', code: 'VTU_AFRICA_NOT_CONFIGURED' });
+    }
+
     const {
       service,
       userid,
@@ -2080,6 +2074,7 @@ const fundBettingAccount = async (req, res) => {
       phone: phone,
       amount: amount.toString(),
       ref: reference,
+      webhookURL: process.env.VTU_AFRICA_WEBHOOK_URL || '',
     };
 
     console.log('✅ VTU Africa Betting Funding Params:', params);

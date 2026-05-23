@@ -1,3 +1,5 @@
+// controllers/bookingController.js
+// MINIMAL INTEGRATION - Uses centralized payment helper
 
 const Transaction = require('../models/Transaction');
 const User = require('../models/User');
@@ -8,11 +10,29 @@ const {
   searchPassengerByPhone: searchPassenger 
 } = require('../util/passengerProfile');
 
+// ✅ Import centralized payment helper
+const {
+  verifyUserAndPin,
+  validateWalletBalance,
+  deductWalletBalance,
+  refundWalletBalance,
+} = require('../util/paymentHelper');
+
 // ============================================
 // CREATE BOOKING
 // ============================================
 
 exports.createBooking = async (req, res) => {
+  // Travu API integration is pending — refuse all bookings until credentials are configured
+  // and the actual booking call is implemented. This prevents wallet deductions with no ticket issued.
+  if (!process.env.TRAVU_API_KEY) {
+    return res.status(503).json({
+      success: false,
+      message: "Bus booking is temporarily unavailable while we upgrade our ticketing system. Please try again soon.",
+      code: "BOOKING_INTEGRATION_PENDING",
+    });
+  }
+
   try {
     const userId = req.user._id;
     const {
@@ -40,32 +60,11 @@ exports.createBooking = async (req, res) => {
       });
     }
 
-    // Get user with transaction PIN
-    const user = await User.findById(userId).select('+transactionPinHash +walletBalance');
+    // ✅ USE CENTRALIZED HELPER: Verify user and PIN
+    const user = await verifyUserAndPin(req, pin);
 
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found',
-      });
-    }
-
-    // Verify transaction PIN
-    const isPinValid = await user.validateTransactionPin(pin);
-    if (!isPinValid) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid transaction PIN',
-      });
-    }
-
-    // Check wallet balance
-    if (user.walletBalance < payment.amount) {
-      return res.status(400).json({
-        success: false,
-        message: 'Insufficient wallet balance',
-      });
-    }
+    // ✅ USE CENTRALIZED HELPER: Validate wallet balance
+    validateWalletBalance(user, payment.amount);
 
     // Generate booking reference
     const bookingReference = Booking.generateBookingReference();
@@ -108,23 +107,25 @@ exports.createBooking = async (req, res) => {
       userAgent: req.headers['user-agent'],
     });
 
-    // Deduct from wallet
-    user.walletBalance -= payment.amount;
-    await user.save();
+    // ✅ USE CENTRALIZED HELPER: Deduct from wallet
+    const newBalance = await deductWalletBalance(user, payment.amount);
 
-    // Create transaction record
-    const transaction = await Transaction.create({
+    // Create transaction using helper method
+    const transaction = await Transaction.createBookingTransaction({
       userId,
-      type: 'transport_booking',
+      bookingType: 'transport',
+      bookingReference,
+      bookingId: booking._id,
       amount: payment.amount,
-      status: 'successful',
-      description: `Transport booking: ${tripDetails.origin} → ${tripDetails.destination}`,
-      reference: bookingReference,
+      currency: 'NGN',
+      paymentMethod: payment.method || 'wallet',
       metadata: {
-        bookingId: booking._id,
-        provider: tripDetails.provider.name,
+        provider: tripDetails.provider.name || tripDetails.provider,
+        route: `${tripDetails.origin} → ${tripDetails.destination}`,
         passengers: passengers.length,
-      },
+        vehicle: tripDetails.vehicle?.name || tripDetails.vehicle,
+        departureDate: tripDetails.departureDate,
+      }
     });
 
     // Link transaction to booking
@@ -143,6 +144,7 @@ exports.createBooking = async (req, res) => {
     await savePassengerProfiles(userId, passengers);
 
     console.log('✅ Booking created:', bookingReference);
+    console.log('✅ Transaction created:', transaction.reference);
 
     res.status(201).json({
       success: true,
@@ -150,18 +152,117 @@ exports.createBooking = async (req, res) => {
       data: {
         bookingId: booking._id,
         bookingReference: booking.bookingReference,
+        transactionReference: transaction.reference,
         status: booking.status,
         amount: booking.payment.amount,
         passengers: booking.passengers.length,
-        newWalletBalance: user.walletBalance,
+        newWalletBalance: newBalance,
       },
     });
   } catch (error) {
     console.error('❌ Create Booking Error:', error.message);
+    console.error('Stack:', error.stack);
     res.status(500).json({
       success: false,
-      message: 'Failed to create booking',
-      error: error.message,
+      message: error.message || 'Failed to create booking',
+    });
+  }
+};
+
+// ============================================
+// CANCEL BOOKING
+// ============================================
+
+exports.cancelBooking = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { bookingId } = req.params;
+    const { reason } = req.body;
+
+    console.log('❌ Cancelling booking:', bookingId);
+
+    const booking = await Booking.findOne({
+      _id: bookingId,
+      userId,
+    });
+
+    if (!booking) {
+      return res.status(404).json({
+        success: false,
+        message: 'Booking not found',
+      });
+    }
+
+    // Check if can be cancelled
+    if (!booking.canBeCancelled()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Booking cannot be cancelled. Must be at least 2 hours before departure.',
+      });
+    }
+
+    // TODO: Cancel with Travu API
+    // await travuService.cancelBooking(booking.travuBookingId);
+
+    // Calculate refund (80% of booking amount as cancellation fee policy)
+    const refundAmount = booking.payment.amount * 0.8;
+    const cancellationFee = booking.payment.amount - refundAmount;
+
+    // Update booking
+    booking.status = 'cancelled';
+    booking.cancellation = {
+      reason: reason || 'User requested cancellation',
+      cancelledAt: new Date(),
+      refundAmount,
+      refundStatus: 'pending',
+    };
+    await booking.save();
+
+    // ✅ USE CENTRALIZED HELPER: Refund to wallet
+    const user = await User.findById(userId).select('+walletBalance');
+    const newBalance = await refundWalletBalance(user, refundAmount);
+
+    // Create refund transaction with correct status
+    const refundReference = `REF-${booking.bookingReference}-${Date.now()}`;
+    
+    await Transaction.create({
+      userId,
+      type: 'transport_refund',
+      bookingType: 'transport',
+      bookingReference: booking.bookingReference,
+      bookingId: booking._id,
+      amount: refundAmount,
+      currency: 'NGN',
+      reference: refundReference,
+      status: 'completed',
+      paymentMethod: 'wallet',
+      metadata: {
+        originalAmount: booking.payment.amount,
+        cancellationFee,
+        reason: reason || 'User requested cancellation',
+      },
+      paidAt: new Date(),
+    });
+
+    booking.cancellation.refundStatus = 'processed';
+    await booking.save();
+
+    console.log('✅ Booking cancelled and refunded');
+
+    res.json({
+      success: true,
+      message: 'Booking cancelled successfully',
+      data: {
+        refundAmount,
+        cancellationFee,
+        newWalletBalance: newBalance,
+      },
+    });
+  } catch (error) {
+    console.error('❌ Cancel Booking Error:', error.message);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to cancel booking',
     });
   }
 };
@@ -284,96 +385,6 @@ exports.getBookingByReference = async (req, res) => {
 };
 
 // ============================================
-// CANCEL BOOKING
-// ============================================
-
-exports.cancelBooking = async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const { bookingId } = req.params;
-    const { reason } = req.body;
-
-    console.log('❌ Cancelling booking:', bookingId);
-
-    const booking = await Booking.findOne({
-      _id: bookingId,
-      userId,
-    });
-
-    if (!booking) {
-      return res.status(404).json({
-        success: false,
-        message: 'Booking not found',
-      });
-    }
-
-    // Check if can be cancelled
-    if (!booking.canBeCancelled()) {
-      return res.status(400).json({
-        success: false,
-        message: 'Booking cannot be cancelled. Must be at least 2 hours before departure.',
-      });
-    }
-
-    // TODO: Cancel with Travu API
-    // await travuService.cancelBooking(booking.travuBookingId);
-
-    // Calculate refund (80% of booking amount as cancellation fee policy)
-    const refundAmount = booking.payment.amount * 0.8;
-
-    // Update booking
-    booking.status = 'cancelled';
-    booking.cancellation = {
-      reason: reason || 'User requested cancellation',
-      cancelledAt: new Date(),
-      refundAmount,
-      refundStatus: 'pending',
-    };
-    await booking.save();
-
-    // Refund to wallet
-    const user = await User.findById(userId);
-    user.walletBalance += refundAmount;
-    await user.save();
-
-    // Create refund transaction
-    await Transaction.create({
-      userId,
-      type: 'transport_refund',
-      amount: refundAmount,
-      status: 'successful',
-      description: `Refund for cancelled booking: ${booking.bookingReference}`,
-      reference: `REF_${booking.bookingReference}`,
-      metadata: {
-        bookingId: booking._id,
-        originalAmount: booking.payment.amount,
-      },
-    });
-
-    booking.cancellation.refundStatus = 'processed';
-    await booking.save();
-
-    console.log('✅ Booking cancelled and refunded');
-
-    res.json({
-      success: true,
-      message: 'Booking cancelled successfully',
-      data: {
-        refundAmount,
-        newWalletBalance: user.walletBalance,
-      },
-    });
-  } catch (error) {
-    console.error('❌ Cancel Booking Error:', error.message);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to cancel booking',
-    });
-  }
-};
-
-
-// ============================================
 // PASSENGER PROFILE CONTROLLERS
 // ============================================
 
@@ -430,3 +441,5 @@ exports.searchPassengerByPhone = async (req, res) => {
     });
   }
 };
+
+module.exports = exports;

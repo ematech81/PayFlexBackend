@@ -12,7 +12,7 @@ const errorHandler = require("./middleware/errorHandler");
 const verificationRoutes = require('./routes/verificationRoutes');
 const referralRoutes = require('./routes/referralRoutes');
 const bookingRoutes = require('./routes/bookingRoutes');
-const flightRoutes = require('./routes/flightRoutes');
+// flightRoutes removed — Amadeus deprecated, Travu replacement pending
 
 
 
@@ -27,7 +27,25 @@ const startServer = async () => {
 
     // 3️⃣ Apply middlewares
     app.use(express.json({ limit: "2mb" }));
-    app.use(cors());
+
+    const allowedOrigins = process.env.ALLOWED_ORIGINS
+      ? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim())
+      : [];
+
+    app.use(
+      cors({
+        origin: (origin, callback) => {
+          // Allow requests with no origin (mobile apps, curl, Postman)
+          if (!origin) return callback(null, true);
+          if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+            return callback(null, true);
+          }
+          callback(new Error(`CORS: origin ${origin} not allowed`));
+        },
+        credentials: true,
+      })
+    );
+
     app.use(helmet());
     app.use(morgan("dev"));
 
@@ -44,11 +62,11 @@ const startServer = async () => {
     app.use("/api/kyc", require("./routes/kycRoutes"));
     app.use("/api/pin", require("./routes/pinRoutes"));
     app.use("/api/payments", require("./routes/paymentRoutes"));
-    // app.use('/api/payment', require('./routes/payStackRoutes'));
+    app.use('/api/payment', require('./routes/payStackRoutes'));
     app.use('/api/verification', verificationRoutes);
     app.use('/api/referral', referralRoutes);
     app.use('/api/bookings', bookingRoutes);
-    app.use('/api/flights', flightRoutes);
+    // /api/flights removed — Amadeus deprecated, Travu replacement pending
 
     // 7️⃣ Health endpoint
     app.get("/health", (req, res) => res.json({ ok: true }));

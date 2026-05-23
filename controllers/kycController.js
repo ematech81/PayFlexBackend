@@ -17,26 +17,44 @@ exports.submitBVN = async (req, res, next) => {
     const result = await verifyBVN({ bvn, firstName, lastName, phone, dob });
 
     if (!result.match) {
-      req.user.kyc = {
-        ...req.user.kyc,
+      req.user.bvnVerification = {
         bvn,
-        bvnVerified: false,
-        status: "pending",
+        status: "failed",
+        verifiedAt: new Date(),
       };
+      req.user.isBVNVerified = false;
       await req.user.save();
       return res
         .status(400)
         .json({ message: "BVN could not be verified", result: result.details });
     }
 
-    req.user.kyc.bvn = bvn;
-    req.user.kyc.bvnVerified = true;
-    req.user.kyc.status = req.user.kyc.idVerified ? "verified" : "pending";
+    req.user.bvnVerification = {
+      bvn,
+      firstName: result.details?.firstName || firstName,
+      surname: result.details?.lastName || lastName,
+      phoneNumber: result.details?.phone || phone,
+      dateOfBirth: result.details?.dob || dob,
+      reportId: result.raw?.reportId,
+      verifiedAt: new Date(),
+      status: "verified",
+    };
+    req.user.isBVNVerified = true;
+
+    // Promote overall kyc status
+    if (req.user.isNINVerified) {
+      req.user.kyc = "verified";
+      req.user.verificationStatus = "fully_verified";
+    } else {
+      req.user.verificationStatus = "bvn_verified";
+    }
+
     await req.user.save();
 
     res.json({
       message: "BVN verified",
-      kyc: req.user.kyc,
+      isBVNVerified: req.user.isBVNVerified,
+      verificationStatus: req.user.verificationStatus,
       provider: result.raw?.provider || "provider",
     });
   } catch (e) {
@@ -45,7 +63,6 @@ exports.submitBVN = async (req, res, next) => {
 };
 
 // ====== ID Upload ======
-// Local dev storage (for production, use Cloudinary/S3)
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, "uploads/ids"),
   filename: (req, file, cb) =>
@@ -60,8 +77,6 @@ const upload = multer({
   },
 }).single("idImage");
 
-// If using Cloudinary instead, swap the handler to upload to cloud and store secure_url.
-
 exports.uploadID = (req, res, next) => {
   upload(req, res, async (err) => {
     try {
@@ -70,23 +85,24 @@ exports.uploadID = (req, res, next) => {
         return res.status(400).json({ message: "No file uploaded" });
 
       const { idType } = req.body;
-      if (
-        !["NIN", "DRIVERS_LICENSE", "PASSPORT", "VOTER_ID"].includes(idType)
-      ) {
-        // cleanup
+      if (!["NIN", "DRIVERS_LICENSE", "PASSPORT", "VOTER_ID"].includes(idType)) {
         fs.unlinkSync(req.file.path);
         return res.status(400).json({ message: "Invalid idType" });
       }
 
-      req.user.kyc.idType = idType;
-      req.user.kyc.idImageUrl = `/${req.file.path.replace(/\\/g, "/")}`; // served via /uploads
-      req.user.kyc.idVerified = false; // set true after manual/auto review
-      req.user.kyc.status = req.user.kyc.bvnVerified ? "pending" : "unverified";
+      // Store on ninVerification as a placeholder until a dedicated idDoc field is added
+      req.user.ninVerification = {
+        ...req.user.ninVerification?.toObject?.() || {},
+        idType,
+        idImageUrl: `/${req.file.path.replace(/\\/g, "/")}`,
+        status: "pending",
+      };
       await req.user.save();
 
       res.json({
         message: "ID uploaded. Pending verification.",
-        kyc: req.user.kyc,
+        idType,
+        status: "pending",
       });
     } catch (e2) {
       next(e2);
@@ -94,24 +110,36 @@ exports.uploadID = (req, res, next) => {
   });
 };
 
-// Optional: Admin endpoint to approve/reject ID after review
+// Admin approve/reject ID
 exports.adminVerifyID = async (req, res, next) => {
   try {
     const { userId, approve, notes } = req.body;
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    user.kyc.idVerified = !!approve;
-    user.kyc.notes = notes || null;
-    user.kyc.status =
-      user.kyc.bvnVerified && user.kyc.idVerified
-        ? "verified"
-        : approve
-        ? "pending"
-        : "rejected";
+    if (approve) {
+      user.isNINVerified = true;
+      user.ninVerification = { ...user.ninVerification?.toObject?.() || {}, status: "verified", verifiedAt: new Date() };
+      if (user.isBVNVerified) {
+        user.kyc = "verified";
+        user.verificationStatus = "fully_verified";
+      } else {
+        user.verificationStatus = "nin_verified";
+      }
+    } else {
+      user.isNINVerified = false;
+      user.ninVerification = { ...user.ninVerification?.toObject?.() || {}, status: "failed" };
+      user.kyc = "rejected";
+    }
+
     await user.save();
 
-    res.json({ message: "KYC updated", kyc: user.kyc });
+    res.json({
+      message: "KYC updated",
+      kyc: user.kyc,
+      verificationStatus: user.verificationStatus,
+      notes: notes || null,
+    });
   } catch (e) {
     next(e);
   }

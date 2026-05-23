@@ -638,172 +638,401 @@ exports.getSeatmapByOrderId = async (req, res) => {
 };
 
 // ============================================
-// FLIGHT CREATE ORDER (BOOKING)
+// FLIGHT CREATE ORDER (BOOKING) - REFACTORED
 // ============================================
-
+ 
 /**
- * Create flight booking order
+ * Create flight booking order with payment
  * @route POST /api/flights/book
  * @access Private
+ * @body {
+ *   data: {
+ *     type: 'flight-order',
+ *     flightOffers: [flightOffer],
+ *     travelers: [traveler1, traveler2, ...],
+ *     contacts: [contact],
+ *     remarks: { general: [...] },
+ *     ticketingAgreement: { option: 'DELAY_TO_CANCEL', delay: '6D' }
+ *   },
+ *   payment: {
+ *     method: 'wallet',
+ *     amount: 45000,
+ *     currency: 'NGN'
+ *   },
+ *   pin: '1234'
+ * }
  */
-exports.createFlightOrder = async (req, res) => {
+exports.createFlightBooking = async (req, res) => {
   try {
     const userId = req.user._id;
-    const { flightOffers, travelers, contacts, remarks } = req.body;
-
+    const { data, payment, pin } = req.body;
+ 
+    console.log('📝 Creating flight booking for user:', userId);
+ 
     // Validate required fields
-    if (!flightOffers || !travelers || !contacts) {
+    if (!data || !data.flightOffers || !data.travelers || !data.contacts) {
       return res.status(400).json({
         success: false,
         message: 'Flight offers, travelers and contact information are required',
+        errors: [{
+          status: 400,
+          code: 477,
+          title: 'INVALID FORMAT',
+          detail: 'Missing required fields: data.flightOffers, data.travelers, data.contacts',
+        }]
       });
     }
-
-    console.log('📝 Creating flight order for user:', userId);
-
-    // Create order with Amadeus
-    const response = await amadeus.booking.flightOrders.post(
-      JSON.stringify({
-        data: {
-          type: 'flight-order',
-          flightOffers: flightOffers,
-          travelers: travelers,
-          contacts: contacts,
-          remarks: remarks,
-        },
-      })
-    );
-
-    console.log('✅ Flight order created:', response.data.id);
-
-    // TODO: Save booking to database
-    // const flightBooking = await FlightBooking.create({
-    //   userId,
-    //   amadeusOrderId: response.data.id,
-    //   ...response.data,
-    // });
-
-    res.status(201).json({
-      success: true,
-      message: 'Flight booking created successfully',
-      data: response.data,
-    });
-
-  } catch (error) {
-    console.error('❌ Flight order creation error:', error.message);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to create flight order',
-      error: error.description || error.message,
-    });
-  }
-};
-
-// ============================================
-// FLIGHT ORDER MANAGEMENT
-// ============================================
-
-/**
- * Get flight order details
- * @route GET /api/flights/orders/:orderId
- * @access Private
- */
-exports.getFlightOrder = async (req, res) => {
-  try {
-    const { orderId } = req.params;
-
-    console.log('📋 Retrieving flight order:', orderId);
-
-    const response = await amadeus.booking.flightOrder(orderId).get();
-
-    res.json({
-      success: true,
-      data: response.data,
-    });
-
-  } catch (error) {
-    console.error('❌ Flight order retrieval error:', error.message);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to retrieve flight order',
-      error: error.description || error.message,
-    });
-  }
-};
-
-/**
- * Cancel flight order
- * @route DELETE /api/flights/orders/:orderId
- * @access Private
- */
-exports.cancelFlightOrder = async (req, res) => {
-  try {
-    const { orderId } = req.params;
-
-    console.log('❌ Cancelling flight order:', orderId);
-
-    const response = await amadeus.booking.flightOrder(orderId).delete();
-
-    console.log('✅ Flight order cancelled');
-
-    // TODO: Update booking status in database
-
-    res.json({
-      success: true,
-      message: 'Flight order cancelled successfully',
-      data: response.data,
-    });
-
-  } catch (error) {
-    console.error('❌ Flight order cancellation error:', error.message);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to cancel flight order',
-      error: error.description || error.message,
-    });
-  }
-};
-
-// ============================================
-// FLIGHT CHECK-IN LINKS
-// ============================================
-
-/**
- * Get check-in links for an airline
- * @route GET /api/flights/checkin-links
- * @access Public
- */
-exports.getCheckinLinks = async (req, res) => {
-  try {
-    const { airlineCode } = req.query;
-
-    if (!airlineCode) {
+ 
+    if (!payment || !pin) {
       return res.status(400).json({
         success: false,
-        message: 'Airline code is required',
+        message: 'Payment information and PIN are required',
       });
     }
-
-    console.log('🔗 Getting check-in link for airline:', airlineCode);
-
-    const response = await amadeus.referenceData.urls.checkinLinks.get({
-      airlineCode: airlineCode,
+ 
+    // ============================================
+    // USE CENTRALIZED PAYMENT HELPER
+    // ============================================
+ 
+    // 1. Verify user and PIN
+    const user = await verifyUserAndPin(req, pin);
+ 
+    // 2. Process payment with automatic rollback
+    const result = await processPaymentWithRollback({
+      user,
+      amount: payment.amount,
+      type: 'flight_booking',
+      transactionData: {
+        bookingType: 'flight',
+        currency: payment.currency || 'NGN',
+        paymentMethod: payment.method || 'wallet',
+      },
+      paymentOperation: async (transaction, session) => {
+        // Generate booking reference
+        const bookingReference = `FL-${Date.now()}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
+ 
+        // Call Amadeus Flight Create Orders API
+        console.log('📞 Calling Amadeus Flight Create Orders...');
+        
+        const amadeusResponse = await amadeus.booking.flightOrders.post(
+          JSON.stringify({
+            data: {
+              type: 'flight-order',
+              flightOffers: data.flightOffers,
+              travelers: data.travelers,
+              contacts: data.contacts,
+              remarks: data.remarks || {
+                general: [{
+                  subType: 'GENERAL_MISCELLANEOUS',
+                  text: 'PayFlex Booking',
+                }],
+              },
+              ticketingAgreement: data.ticketingAgreement || {
+                option: 'DELAY_TO_CANCEL',
+                delay: '6D',
+              },
+            },
+          })
+        );
+ 
+        console.log('✅ Amadeus booking created:', amadeusResponse.data.id);
+ 
+        const amadeusOrderId = amadeusResponse.data.id;
+        const pnr = amadeusResponse.data.associatedRecords?.[0]?.reference || bookingReference;
+ 
+        // Save passengers to database
+        const savedPassengerIds = [];
+        for (const traveler of data.travelers) {
+          const passengerData = {
+            userId,
+            firstName: traveler.name.firstName,
+            lastName: traveler.name.lastName,
+            dateOfBirth: traveler.dateOfBirth,
+            gender: traveler.gender,
+            email: traveler.contact?.emailAddress,
+            phoneNumber: traveler.contact?.phones?.[0]?.number,
+          };
+ 
+          // Add passport info if available
+          if (traveler.documents && traveler.documents.length > 0) {
+            const passport = traveler.documents[0];
+            passengerData.passportNumber = passport.number;
+            passengerData.passportExpiry = passport.expiryDate;
+            passengerData.nationality = passport.nationality;
+          }
+ 
+          const passenger = await PassengerProfile.create([passengerData], { session });
+          savedPassengerIds.push(passenger[0]._id);
+        }
+ 
+        // Extract flight details for storage
+        const flightOffer = data.flightOffers[0];
+        const firstSegment = flightOffer.itineraries?.[0]?.segments?.[0];
+        const lastSegment = flightOffer.itineraries?.[0]?.segments?.[
+          flightOffer.itineraries[0].segments.length - 1
+        ];
+ 
+        // Extract selected seats if any
+        const selectedSeats = {};
+        flightOffer.travelerPricings?.forEach((pricing) => {
+          pricing.fareDetailsBySegment?.forEach((segment) => {
+            const seatNumber = segment.additionalServices?.chargeableSeatNumber;
+            if (seatNumber) {
+              selectedSeats[pricing.travelerId] = seatNumber;
+            }
+          });
+        });
+ 
+        // Create flight booking record
+        const booking = await FlightBooking.create([{
+          userId,
+          bookingReference,
+          amadeusOrderId,
+          pnr,
+          status: 'confirmed',
+          flight: {
+            origin: firstSegment?.departure?.iataCode,
+            destination: lastSegment?.arrival?.iataCode,
+            departureDate: firstSegment?.departure?.at,
+            arrivalDate: lastSegment?.arrival?.at,
+            airline: flightOffer.validatingAirlineCodes?.[0],
+            flightNumber: firstSegment?.number,
+            aircraft: firstSegment?.aircraft?.code,
+            cabin: flightOffer.travelerPricings?.[0]?.fareDetailsBySegment?.[0]?.cabin,
+          },
+          passengers: savedPassengerIds,
+          selectedSeats,
+          totalAmount: payment.amount,
+          currency: payment.currency || 'NGN',
+          payment: {
+            amount: payment.amount,
+            currency: payment.currency || 'NGN',
+            method: payment.method || 'wallet',
+            paidAt: new Date(),
+            transactionId: transaction._id,
+          },
+          amadeusResponse: amadeusResponse.data, // Store full Amadeus response
+          ipAddress: req.ip,
+          userAgent: req.headers['user-agent'],
+        }], { session });
+ 
+        // Update transaction with booking details
+        transaction.bookingReference = bookingReference;
+        transaction.bookingId = booking[0]._id;
+        transaction.metadata = {
+          amadeusOrderId,
+          pnr,
+          route: `${firstSegment?.departure?.iataCode} → ${lastSegment?.arrival?.iataCode}`,
+          airline: flightOffer.validatingAirlineCodes?.[0],
+          passengers: data.travelers.length,
+          departureDate: firstSegment?.departure?.at,
+        };
+        await transaction.save({ session });
+ 
+        // Save passenger profiles for future use
+        await savePassengerProfiles(userId, data.travelers.map((t, index) => ({
+          firstName: t.name.firstName,
+          lastName: t.name.lastName,
+          dateOfBirth: t.dateOfBirth,
+          gender: t.gender,
+          email: t.contact?.emailAddress,
+          phoneNumber: t.contact?.phones?.[0]?.number,
+          passportNumber: t.documents?.[0]?.number,
+          passportExpiry: t.documents?.[0]?.expiryDate,
+          nationality: t.documents?.[0]?.nationality,
+        })));
+ 
+        console.log('✅ Flight booking created:', bookingReference);
+        console.log('✅ Transaction created:', transaction.reference);
+ 
+        return {
+          success: true,
+          status: 'completed',
+          transactionId: transaction.reference,
+          response: {
+            bookingId: booking[0]._id,
+            bookingReference,
+            amadeusOrderId,
+            pnr,
+            status: 'confirmed',
+          },
+        };
+      },
+      useMongoTransaction: true, // ✅ Use MongoDB transactions for safety
     });
-
-    res.json({
+ 
+    // 3. Return success response
+    res.status(201).json({
       success: true,
-      data: response.data,
+      message: 'Flight booked successfully',
+      data: {
+        bookingId: result.response.bookingId,
+        bookingReference: result.response.bookingReference,
+        amadeusOrderId: result.response.amadeusOrderId,
+        pnr: result.response.pnr,
+        transactionReference: result.transaction.reference,
+        status: result.response.status,
+        amount: payment.amount,
+        currency: payment.currency || 'NGN',
+        newWalletBalance: result.newBalance,
+      },
     });
-
+ 
   } catch (error) {
-    console.error('❌ Check-in links error:', error.message);
+    console.error('❌ Flight Booking Error:', error.message);
+    console.error('Stack:', error.stack);
+ 
+    // Handle Amadeus-specific errors
+    if (error.response?.result?.errors) {
+      const amadeusError = error.response.result.errors[0];
+      return res.status(error.response.statusCode || 500).json({
+        success: false,
+        message: amadeusError.title || 'Flight booking failed',
+        errors: error.response.result.errors,
+      });
+    }
+ 
     res.status(500).json({
       success: false,
-      message: 'Failed to get check-in links',
-      error: error.description || error.message,
+      message: error.message || 'Failed to create flight booking',
     });
   }
 };
+
+
+// ============================================
+// CANCEL FLIGHT BOOKING - REFACTORED
+// ============================================
+ 
+/**
+ * Cancel flight booking with refund
+ * @route POST /api/flights/bookings/:bookingId/cancel
+ * @access Private
+ */
+exports.cancelFlightBooking = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { bookingId } = req.params;
+    const { reason } = req.body;
+ 
+    console.log('❌ Cancelling flight booking:', bookingId);
+ 
+    // Find booking
+    const booking = await FlightBooking.findOne({
+      _id: bookingId,
+      userId,
+    });
+ 
+    if (!booking) {
+      return res.status(404).json({
+        success: false,
+        message: 'Booking not found',
+      });
+    }
+ 
+    // Check if already cancelled
+    if (booking.status === 'cancelled') {
+      return res.status(400).json({
+        success: false,
+        message: 'Booking is already cancelled',
+      });
+    }
+ 
+    // Check if can be cancelled (example: within ticketing agreement delay)
+    const departureDate = new Date(booking.flight.departureDate);
+    const now = new Date();
+    const hoursUntilDeparture = (departureDate - now) / (1000 * 60 * 60);
+ 
+    if (hoursUntilDeparture < 24) {
+      return res.status(400).json({
+        success: false,
+        message: 'Booking cannot be cancelled. Must be at least 24 hours before departure.',
+      });
+    }
+ 
+    // Cancel with Amadeus
+    console.log('📞 Calling Amadeus to cancel order:', booking.amadeusOrderId);
+    
+    try {
+      const amadeusResponse = await amadeus.booking.flightOrder(booking.amadeusOrderId).delete();
+      console.log('✅ Amadeus order cancelled');
+    } catch (amadeusError) {
+      console.error('⚠️ Amadeus cancellation error:', amadeusError.message);
+      // Continue with local cancellation even if Amadeus fails
+      // (You might want to handle this differently based on your business logic)
+    }
+ 
+    // Calculate refund (example: 70% refund for cancellations)
+    const refundPercentage = hoursUntilDeparture >= 72 ? 0.9 : 0.7; // 90% if >72hrs, 70% otherwise
+    const refundAmount = booking.totalAmount * refundPercentage;
+    const cancellationFee = booking.totalAmount - refundAmount;
+ 
+    // Update booking
+    booking.status = 'cancelled';
+    booking.cancellation = {
+      reason: reason || 'User requested cancellation',
+      cancelledAt: new Date(),
+      refundAmount,
+      cancellationFee,
+      refundStatus: 'pending',
+    };
+    await booking.save();
+ 
+    // ✅ USE CENTRALIZED HELPER: Refund to wallet
+    const user = await User.findById(userId).select('+walletBalance');
+    const newBalance = await refundWalletBalance(user, refundAmount);
+ 
+    // Create refund transaction
+    const refundReference = `REF-${booking.bookingReference}-${Date.now()}`;
+    
+    await Transaction.create({
+      userId,
+      type: 'flight_refund',
+      bookingType: 'flight',
+      bookingReference: booking.bookingReference,
+      bookingId: booking._id,
+      amount: refundAmount,
+      currency: booking.currency,
+      reference: refundReference,
+      status: 'completed',
+      paymentMethod: 'wallet',
+      metadata: {
+        originalAmount: booking.totalAmount,
+        cancellationFee,
+        refundPercentage: refundPercentage * 100,
+        reason: reason || 'User requested cancellation',
+        amadeusOrderId: booking.amadeusOrderId,
+      },
+      paidAt: new Date(),
+    });
+ 
+    // Update cancellation status
+    booking.cancellation.refundStatus = 'processed';
+    await booking.save();
+ 
+    console.log('✅ Flight booking cancelled and refunded');
+ 
+    res.json({
+      success: true,
+      message: 'Flight booking cancelled successfully',
+      data: {
+        refundAmount,
+        cancellationFee,
+        refundPercentage: refundPercentage * 100,
+        newWalletBalance: newBalance,
+      },
+    });
+ 
+  } catch (error) {
+    console.error('❌ Cancel Flight Booking Error:', error.message);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to cancel booking',
+    });
+  }
+};
+
+
 
 // ============================================
 // ON-DEMAND FLIGHT STATUS

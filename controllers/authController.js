@@ -2,6 +2,7 @@ const { validationResult } = require("express-validator");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
+const nodemailer = require("nodemailer");
 const User = require("../models/user");
 
 
@@ -67,43 +68,40 @@ function getLastSentFromExpiry(expires) {
   return new Date(new Date(expires).getTime() - OTP_EXP_MIN * 60 * 1000);
 }
 
-// ---------- SMS Service Configuration ----------
-const twilio = require("twilio");
-const twilioClient =
-  process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN
-    ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
-    : null;
+// ---------- SMS Service ----------
+const { sendOtp } = require("../service/smsService");
 
 /**
- * Sends OTP via Twilio SMS
- * Falls back to console logging in development
- * @param {String} phone - Recipient phone number
- * @param {String} otp - OTP code to send
+ * Sends a plain-text email via nodemailer (SMTP configured via env vars)
+ * Falls back to console logging in development when SMTP is not configured
  */
-async function sendSmsOtp(phone, otp) {
-  const to = toE164(phone);
-  
-  // Development fallback - log OTP to console
-  if (!twilioClient || !process.env.TWILIO_PHONE_NUMBER) {
-    console.log(`⚠️  [DEV MODE] Twilio not configured`);
-    console.log(`📱 Phone: ${to}`);
-    console.log(`🔐 OTP: ${otp}`);
-    console.log(`⏰ Expires in: ${OTP_EXP_MIN} minutes`);
+async function sendEmail(to, subject, text) {
+  if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) {
+    console.log(`⚠️  [DEV MODE] SMTP not configured`);
+    console.log(`📧 To: ${to}`);
+    console.log(`📌 Subject: ${subject}`);
+    console.log(`📝 Body: ${text}`);
     return;
   }
 
-  // Production - send actual SMS
-  try {
-    await twilioClient.messages.create({
-      from: process.env.TWILIO_PHONE_NUMBER,
-      to,
-      body: `Your PayFlex verification code is ${otp}. It expires in ${OTP_EXP_MIN} minutes.`,
-    });
-    console.log(`✅ OTP sent to ${maskPhone(phone)}`);
-  } catch (error) {
-    console.error(`❌ Failed to send OTP to ${maskPhone(phone)}:`, error.message);
-    throw new Error("Failed to send verification code. Please try again.");
-  }
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT) || 587,
+    secure: process.env.SMTP_SECURE === "true",
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
+  });
+
+  await transporter.sendMail({
+    from: `"PayFlex" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
+    to,
+    subject,
+    text,
+  });
+
+  console.log(`✅ Email sent to ${to}`);
 }
 
 // ---------- Main Controller ----------
@@ -193,8 +191,9 @@ exports.register = async (req, res, next) => {
     await user.save();
 
     // Step 7: Send OTP via SMS
+    let smsResult;
     try {
-      await sendSmsOtp(user.phone, otp);
+      smsResult = await sendOtp(user.phone, otp, OTP_EXP_MIN);
     } catch (smsError) {
       // If SMS fails, delete the user to maintain data integrity
       await User.findByIdAndDelete(user._id);
@@ -211,6 +210,7 @@ exports.register = async (req, res, next) => {
       userId: user._id,
       phone: maskPhone(user.phone),
       expiresInMinutes: OTP_EXP_MIN,
+      ...(smsResult?.devOtp && { devOtp: smsResult.devOtp }),
     });
 
   } catch (error) {
@@ -233,38 +233,6 @@ exports.register = async (req, res, next) => {
 
 
 
-/**
- * POST /api/auth/phone/verify
- * Body: { userId, otp }
- * Public (verifies right after registration)
- * On success: marks phone verified, clears OTP, returns JWT + user
- */
-
-
-/**
- * Converts Nigerian phone numbers to E.164 format
- * @param {String} phone - Phone number
- * @returns {String} E.164 formatted phone (+234xxxxxxxxxx)
- */
-
-function toE164(phone) {
-  const p = (phone || "").trim();
-  if (p.startsWith("+")) return p;
-  if (/^0[789]\d{9}$/.test(p)) return `+234${p.slice(1)}`;
-  if (/^234[789]\d{9}$/.test(p)) return `+${p}`;
-  return p;
-}
-
-/**
- * Masks phone number for secure display
- * @param {String} phone - Phone number
- * @returns {String} Masked phone (****1234)
- */
-function maskPhone(phone) {
-  if (!phone) return null;
-  const last4 = phone.slice(-4);
-  return `****${last4}`;
-}
 
 
 
@@ -492,12 +460,13 @@ exports.resendPhoneOtpPublic = async (req, res, next) => {
     user.phoneOTPExpires = new Date(Date.now() + OTP_EXP_MIN * 60 * 1000);
     await user.save();
 
-    await sendSmsOtp(user.phone, otp);
+    const smsResult = await sendOtp(user.phone, otp, OTP_EXP_MIN);
 
     res.json({
       message: "OTP resent successfully",
       to: maskPhone(user.phone),
       expiresInMinutes: OTP_EXP_MIN,
+      ...(smsResult?.devOtp && { devOtp: smsResult.devOtp }),
     });
   } catch (e) {
     next(e);
@@ -607,7 +576,7 @@ exports.login = async (req, res, next) => {
       await user.save();
 
       // Send OTP via SMS
-      await sendSmsOtp(user.phone, otp);
+      const smsResult = await sendOtp(user.phone, otp, OTP_EXP_MIN);
 
       return res.status(200).json({
         success: true,
@@ -615,6 +584,7 @@ exports.login = async (req, res, next) => {
         message: "New device detected. We sent a verification code to your phone.",
         phone: maskPhone(user.phone),
         expiresInMinutes: OTP_EXP_MIN,
+        ...(smsResult?.devOtp && { devOtp: smsResult.devOtp }),
       });
     }
 
@@ -866,7 +836,7 @@ exports.resendDeviceOtp = async (req, res, next) => {
     user.phoneOTPExpires = expiresAt;
     await user.save();
 
-    await sendSmsOtp(user.phone, otp);
+    const smsResult = await sendOtp(user.phone, otp, OTP_EXP_MIN);
 
     console.log(`✅ Device OTP resent to ${maskPhone(normalizedPhone)}`);
 
@@ -874,6 +844,7 @@ exports.resendDeviceOtp = async (req, res, next) => {
       success: true,
       message: "Verification code sent successfully",
       expiresInMinutes: OTP_EXP_MIN,
+      ...(smsResult?.devOtp && { devOtp: smsResult.devOtp }),
     });
 
   } catch (error) {
@@ -888,18 +859,17 @@ exports.resendDeviceOtp = async (req, res, next) => {
 //set login pin after phone verification
 exports.setPin = async (req, res, next) => {
   try {
-    const { userId, pin } = req.body;
-    console.log("Setting login PIN for userId:", userId, "PIN:", pin);
+    const { pin } = req.body;
+    const userId = req.user?.id || req.user?._id;
+    console.log("Setting login PIN for userId:", userId);
 
-    // ✅ Validate input
-    if (!userId || !pin || !/^\d{6}$/.test(pin)) {
+    if (!pin || !/^\d{6}$/.test(pin)) {
       return res.status(400).json({
         success: false,
-        message: "userId and a valid 6-digit PIN are required",
+        message: "A valid 6-digit PIN is required",
       });
     }
 
-    // ✅ Find user
     const user = await User.findById(userId);
     if (!user) {
       console.log("User not found for userId:", userId);
@@ -1168,11 +1138,14 @@ exports.forgotLoginPin = async (req, res) => {
   user.resetCodeExpires = Date.now() + 10 * 60 * 1000; // 10 min
   await user.save();
 
-  // Send via SMS
-  await sendSMS(phone, `PayFlex PIN Reset Code: ${code}`);
-  if (user.email) await sendEmail(user.email, "PIN Reset", `Your code: ${code}`);
+  const smsResult = await sendOtp(user.phone, code, 10);
+  if (user.email) await sendEmail(user.email, "PayFlex PIN Reset", `Your PayFlex PIN reset code is ${code}. It expires in 10 minutes.`);
 
-  res.json({ success: true, message: "Reset code sent" });
+  res.json({
+    success: true,
+    message: "Reset code sent",
+    ...(smsResult?.devOtp && { devOtp: smsResult.devOtp }),
+  });
 };
 
 // 2. Verify Reset Code
@@ -1214,8 +1187,7 @@ exports.setPinAfterReset = async (req, res) => {
   const user = await User.findById(decoded.id);
   if (!user) return res.status(404).json({ success: false, message: "User not found" });
 
-  const salt = await bcrypt.genSalt(10);
-  user.loginPin = await bcrypt.hash(pin, salt);
+  user.pinHash = pin; // pre-save hook hashes this
   user.requirePinOnOpen = true;
   await user.save();
 
@@ -1232,26 +1204,24 @@ exports.updateRequirePinOnOpen = async (req, res) => {
 
 exports.resetTransactionPin = async (req, res) => {
   try {
-    const { pin, otp } = req.body; // Validated: pin (4 digits), otp (6 digits)
+    const { pin, otp } = req.body;
     const userId = req.user.id;
-    const user = await User.findById(userId);
+    const user = await User.findById(userId).select("+phoneOTP +phoneOTPExpires");
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
-    if (
-      !user.phoneOTP ||
-      user.phoneOTP !== otp ||
-      user.phoneOTPExpires < Date.now()
-    ) {
+    if (!user.phoneOTP || !user.phoneOTPExpires || user.phoneOTPExpires < Date.now()) {
       return res.status(403).json({ message: "Invalid or expired OTP" });
     }
-    user.transactionPinHash = pin; // Hashed by pre-save hook
-    user.phoneOTP = null;
-    user.phoneOTPExpires = null;
+    const isValidOTP = await bcrypt.compare(String(otp), user.phoneOTP);
+    if (!isValidOTP) {
+      return res.status(403).json({ message: "Invalid or expired OTP" });
+    }
+    user.transactionPinHash = pin; // hashed by pre-save hook
+    user.phoneOTP = undefined;
+    user.phoneOTPExpires = undefined;
     await user.save();
-    res
-      .status(200)
-      .json({ success: true, message: "Transaction PIN reset successfully" });
+    res.status(200).json({ success: true, message: "Transaction PIN reset successfully" });
   } catch (error) {
     res.status(500).json({ message: "Server error", error: error.message });
   }
@@ -1259,26 +1229,24 @@ exports.resetTransactionPin = async (req, res) => {
 
 exports.resetLoginPin = async (req, res) => {
   try {
-    const { pin, otp } = req.body; // Validated: pin (6 digits), otp (6 digits)
+    const { pin, otp } = req.body;
     const userId = req.user.id;
-    const user = await User.findById(userId);
+    const user = await User.findById(userId).select("+phoneOTP +phoneOTPExpires");
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
-    if (
-      !user.phoneOTP ||
-      user.phoneOTP !== otp ||
-      user.phoneOTPExpires < Date.now()
-    ) {
+    if (!user.phoneOTP || !user.phoneOTPExpires || user.phoneOTPExpires < Date.now()) {
       return res.status(403).json({ message: "Invalid or expired OTP" });
     }
-    user.pinHash = pin; // Hashed by pre-save hook
-    user.phoneOTP = null;
-    user.phoneOTPExpires = null;
+    const isValidOTP = await bcrypt.compare(String(otp), user.phoneOTP);
+    if (!isValidOTP) {
+      return res.status(403).json({ message: "Invalid or expired OTP" });
+    }
+    user.pinHash = pin; // hashed by pre-save hook
+    user.phoneOTP = undefined;
+    user.phoneOTPExpires = undefined;
     await user.save();
-    res
-      .status(200)
-      .json({ success: true, message: "Login PIN reset successfully" });
+    res.status(200).json({ success: true, message: "Login PIN reset successfully" });
   } catch (error) {
     res.status(500).json({ message: "Server error", error: error.message });
   }

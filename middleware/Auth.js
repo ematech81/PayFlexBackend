@@ -99,8 +99,8 @@ const adminOnly = (req, res, next) => {
       });
     }
 
-    // Check if user has admin role
-    if (req.user.role !== 'admin') {
+    // Check if user has admin role (roles is an array)
+    if (!req.user.roles?.includes('admin')) {
       console.warn(`⚠️ Non-admin user attempted to access admin route: ${req.user.email}`);
       
       return res.status(403).json({
@@ -136,8 +136,7 @@ const superAdminOnly = (req, res, next) => {
       });
     }
 
-    // Check if user has super admin role
-    if (req.user.role !== 'superadmin') {
+    if (!req.user.roles?.includes('superadmin')) {
       console.warn(`⚠️ Non-super-admin user attempted to access super admin route: ${req.user.email}`);
       
       return res.status(403).json({
@@ -203,7 +202,7 @@ const requireRoles = (...roles) => {
       });
     }
 
-    if (!roles.includes(req.user.role)) {
+    if (!req.user.roles?.some(r => roles.includes(r))) {
       return res.status(403).json({
         success: false,
         message: 'Access denied. Insufficient permissions.',

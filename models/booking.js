@@ -8,7 +8,7 @@ const bookingSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       required: true,
-      index: true,
+      // indexed via compound { userId, createdAt } below
     },
 
     // Booking Reference (Unique)
@@ -130,7 +130,7 @@ const bookingSchema = new mongoose.Schema(
 );
 
 // Indexes for performance
-bookingSchema.index({ bookingReference: 1 });
+// bookingReference already indexed by unique:true on the field definition
 bookingSchema.index({ userId: 1, createdAt: -1 });
 bookingSchema.index({ status: 1, createdAt: -1 });
 bookingSchema.index({ 'tripDetails.departureDate': 1 });
