@@ -41,8 +41,9 @@ const startServer = async () => {
     // All other routes are unaffected — they still receive parsed JSON.
     // Raw body MUST be applied before express.json() for any webhook path
     // that needs HMAC signature verification on the original bytes.
-    app.use('/api/vtu-africa/webhook', express.raw({ type: '*/*' }));
-    app.use('/api/payment/webhook',    express.raw({ type: '*/*' }));
+    app.use('/api/vtu-africa/webhook',  express.raw({ type: '*/*' }));
+    app.use('/api/payment/webhook',     express.raw({ type: '*/*' }));
+    app.use('/api/webhooks/korapay',    express.raw({ type: '*/*' }));
 
     app.use(express.json({ limit: "2mb" }));
 
@@ -81,6 +82,8 @@ const startServer = async () => {
     app.use("/api/pin", require("./routes/pinRoutes"));
     app.use("/api/payments", require("./routes/paymentRoutes"));
     app.use('/api/payment', require('./routes/payStackRoutes'));
+    // Central Kora Pay router forwards to this path (ROUTE_PFX in the router env)
+    app.use('/api/webhooks/korapay', require('./routes/koraWebhookRoute'));
     app.use('/api/verification', verificationRoutes);
     app.use('/api/referral', referralRoutes);
     app.use('/api/bookings', bookingRoutes);
