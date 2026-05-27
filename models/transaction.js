@@ -127,7 +127,7 @@ const transactionSchema = new mongoose.Schema({
   // ============================================
   paymentMethod: {
     type: String,
-    enum: ["wallet", "card", "bank_transfer", "ussd", "paystack", "flutterwave"],
+    enum: ["wallet", "card", "bank_transfer", "ussd", "paystack", "flutterwave", "airtime"],
     default: "wallet",
   },
   
