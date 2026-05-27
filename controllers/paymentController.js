@@ -368,7 +368,7 @@ const verifyMeterNumber = async (req, res) => {
 
 const payElectricityBill = async (req, res) => {
   try {
-    const { meterNumber, disco, meterType, amount, phone, pin } = req.body;
+    const { meterNumber, disco, meterType, amount, phone, phoneNumber: bodyPhone, pin } = req.body;
 
     if (!meterNumber || !disco || !meterType || !amount || !pin) {
       return res.status(400).json({ success: false, message: 'meterNumber, disco, meterType, amount, and pin are required.' });
@@ -387,7 +387,7 @@ const payElectricityBill = async (req, res) => {
 
     const reference  = `ref_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const request_id = generateRequestId();
-    const phoneNum   = phone || user.phone || user.phoneNumber;
+    const phoneNum   = phone || bodyPhone || user.phone || user.phoneNumber;
 
     const session = await mongoose.startSession();
     let txDoc;
