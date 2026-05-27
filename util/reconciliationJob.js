@@ -16,9 +16,11 @@
  * only records with status === 'pending' are touched.
  */
 
+const mongoose           = require('mongoose');
 const vtuAfricaService   = require('../services/vtuAfricaService');
 const ExamPinTransaction = require('../models/ExamPinTransaction');
 const BettingTransaction = require('../models/BettingTransaction');
+const Transaction        = require('../models/transaction');
 const User               = require('../models/user');
 const { refundWalletBalance } = require('./paymentHelper');
 
@@ -33,7 +35,7 @@ async function runReconciliation() {
 
   console.log(`[reconciliation] Starting run at ${now.toISOString()}`);
 
-  const [examTxs, bettingTxs] = await Promise.all([
+  const [examTxs, bettingTxs, a2cTxs] = await Promise.all([
     ExamPinTransaction.find({
       status:    'pending',
       createdAt: { $lte: graceAge },
@@ -42,17 +44,18 @@ async function runReconciliation() {
       status:    'pending',
       createdAt: { $lte: graceAge },
     }),
+    Transaction.find({
+      type:      'airtime_conversion',
+      status:    'pending',
+      createdAt: { $lte: graceAge },
+    }),
   ]);
 
-  console.log(`[reconciliation] Found ${examTxs.length} exam + ${bettingTxs.length} betting pending.`);
+  console.log(`[reconciliation] Found ${examTxs.length} exam + ${bettingTxs.length} betting + ${a2cTxs.length} A2C pending.`);
 
-  for (const tx of examTxs) {
-    await _resolveExam(tx, staleAge);
-  }
-
-  for (const tx of bettingTxs) {
-    await _resolveBetting(tx, staleAge);
-  }
+  for (const tx of examTxs)   { await _resolveExam(tx, staleAge);    }
+  for (const tx of bettingTxs) { await _resolveBetting(tx, staleAge); }
+  for (const tx of a2cTxs)    { await _resolveA2C(tx, staleAge);     }
 
   console.log('[reconciliation] Run complete.');
 }
@@ -133,6 +136,53 @@ async function _resolveBetting(tx, staleAge) {
     }
   } catch (err) {
     console.error(`[reconciliation] Error resolving betting ref ${ref}:`, err.message);
+  }
+}
+
+// ─── A2C resolution ───────────────────────────────────────────────────────────
+async function _resolveA2C(tx, staleAge) {
+  const ref = tx.reference;
+  const session = await mongoose.startSession();
+  try {
+    if (tx.createdAt <= staleAge) {
+      console.error(`[reconciliation] ALERT: A2C ref ${ref} has been pending for >2 hours — manual review required.`);
+    }
+
+    const result = await vtuAfricaService.queryTransaction({ ref });
+
+    if (!result.ok) {
+      console.warn(`[reconciliation] queryTransaction failed for A2C ref ${ref}: ${result.description?.message}`);
+      return;
+    }
+
+    const desc = result.description || {};
+
+    if (desc.Status === 'Completed') {
+      session.startTransaction();
+      const user = await User.findById(tx.userId).select('+walletBalance').session(session);
+      if (!user) {
+        await session.abortTransaction();
+        console.error(`[reconciliation] CRITICAL: A2C ref ${ref} — user ${tx.userId} not found.`);
+        return;
+      }
+      user.walletBalance = (user.walletBalance || 0) + tx.amount;
+      await user.save({ session });
+      tx.status = 'success';
+      tx.metadata = { ...tx.metadata, vtuReferenceId: desc.ReferenceID };
+      await tx.save({ session });
+      await session.commitTransaction();
+      console.log(`[reconciliation] A2C ref ${ref} resolved → success. ₦${tx.amount} credited to user ${tx.userId}.`);
+    } else {
+      tx.status = 'failed';
+      tx.metadata = { ...tx.metadata, failureReason: desc.message || `Reconciliation: Status=${desc.Status}` };
+      await tx.save();
+      console.warn(`[reconciliation] A2C ref ${ref} resolved → failed (${desc.Status}). User already sent airtime — flag for ops review.`);
+    }
+  } catch (err) {
+    await session.abortTransaction().catch(() => {});
+    console.error(`[reconciliation] Error resolving A2C ref ${ref}:`, err.message);
+  } finally {
+    session.endSession();
   }
 }
 
