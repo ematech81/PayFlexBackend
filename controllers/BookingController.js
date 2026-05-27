@@ -1,8 +1,8 @@
 // controllers/bookingController.js
 // MINIMAL INTEGRATION - Uses centralized payment helper
 
-const Transaction = require('../models/Transaction');
-const User = require('../models/User');
+const Transaction = require('../models/transaction');
+const User = require('../models/user');
 const Booking = require('../models/booking');
 const { 
   savePassengerProfiles, 

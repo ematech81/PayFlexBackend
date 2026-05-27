@@ -2,7 +2,7 @@
 
 const express      = require('express');
 const router       = express.Router();
-const { protect }  = require('../middleware/Auth');
+const { protect }  = require('../middleware/auth');
 const verifyPin    = require('../middleware/verifyPin');
 const {
   getPlatforms,
