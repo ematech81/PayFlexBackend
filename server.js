@@ -39,10 +39,10 @@ const startServer = async () => {
     // express.json() parser. This preserves the raw Buffer so the webhook
     // controller can verify the MD5 apikey hash against the original bytes.
     // All other routes are unaffected — they still receive parsed JSON.
-    app.use(
-      '/api/vtu-africa/webhook',
-      express.raw({ type: '*/*' })
-    );
+    // Raw body MUST be applied before express.json() for any webhook path
+    // that needs HMAC signature verification on the original bytes.
+    app.use('/api/vtu-africa/webhook', express.raw({ type: '*/*' }));
+    app.use('/api/payment/webhook',    express.raw({ type: '*/*' }));
 
     app.use(express.json({ limit: "2mb" }));
 
