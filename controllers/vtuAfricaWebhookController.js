@@ -17,9 +17,12 @@
  * prevent their retry queue from flooding us with the same payload.
  */
 
+const mongoose           = require('mongoose');
 const vtuAfricaService   = require('../services/vtuAfricaService');
 const ExamPinTransaction = require('../models/ExamPinTransaction');
 const BettingTransaction = require('../models/BettingTransaction');
+const Transaction        = require('../models/transaction');
+const User               = require('../models/user');
 
 // ─── Main handler ─────────────────────────────────────────────────────────────
 const handleWebhook = async (req, res) => {
@@ -57,10 +60,12 @@ const handleWebhook = async (req, res) => {
   const { queryResult } = verification;
 
   // ── Idempotency: find the matching local transaction ───────────────────────
-  // Check exam pins first, then betting
+  // Check exam pins, betting, then Airtime2Cash (main Transaction model)
   const examTx    = await ExamPinTransaction.findOne({ ref });
   const bettingTx = examTx ? null : await BettingTransaction.findOne({ ref });
-  const txDoc     = examTx || bettingTx;
+  const a2cTx     = (examTx || bettingTx) ? null
+                  : await Transaction.findOne({ reference: ref, type: 'airtime_conversion' });
+  const txDoc     = examTx || bettingTx || a2cTx;
 
   if (!txDoc) {
     console.warn(`[vtuAfricaWebhook] No local transaction found for ref: ${ref}`);
@@ -82,6 +87,12 @@ const handleWebhook = async (req, res) => {
   // ── Update betting transaction ─────────────────────────────────────────────
   if (bettingTx) {
     await _processBettingWebhook(bettingTx, queryResult, payload);
+    return;
+  }
+
+  // ── Update Airtime2Cash transaction + credit wallet ────────────────────────
+  if (a2cTx) {
+    await _processA2CWebhook(a2cTx, queryResult);
   }
 };
 
@@ -144,6 +155,45 @@ async function _processBettingWebhook(txDoc, queryResult, payload) {
     }
   } catch (err) {
     console.error(`[vtuAfricaWebhook] Error processing betting ref ${ref}:`, err.message);
+  }
+}
+
+// ─── Airtime2Cash webhook processing ─────────────────────────────────────────
+async function _processA2CWebhook(txDoc, queryResult) {
+  const ref = txDoc.reference;
+  const session = await mongoose.startSession();
+  try {
+    if (queryResult.ok && queryResult.description?.Status === 'Completed') {
+      session.startTransaction();
+
+      const user = await User.findById(txDoc.userId).select('+walletBalance').session(session);
+      if (!user) {
+        await session.abortTransaction();
+        console.error(`[vtuAfricaWebhook] A2C ref ${ref}: user ${txDoc.userId} not found — aborting.`);
+        return;
+      }
+
+      const creditAmount = txDoc.amount; // already set to userReceives at creation time
+      user.walletBalance = (user.walletBalance || 0) + creditAmount;
+      await user.save({ session });
+
+      txDoc.status = 'success';
+      txDoc.metadata = { ...txDoc.metadata, vtuReferenceId: queryResult.description?.ReferenceID };
+      await txDoc.save({ session });
+
+      await session.commitTransaction();
+      console.log(`[vtuAfricaWebhook] A2C ref ${ref} success — ₦${creditAmount} credited to user ${txDoc.userId}.`);
+    } else {
+      txDoc.status = 'failed';
+      txDoc.metadata = { ...txDoc.metadata, failureReason: queryResult.description?.message || 'Not confirmed by VTU Africa.' };
+      await txDoc.save();
+      console.warn(`[vtuAfricaWebhook] A2C ref ${ref} marked failed — query status: ${queryResult.description?.Status}`);
+    }
+  } catch (err) {
+    await session.abortTransaction().catch(() => {});
+    console.error(`[vtuAfricaWebhook] Error processing A2C ref ${ref}:`, err.message);
+  } finally {
+    session.endSession();
   }
 }
 
