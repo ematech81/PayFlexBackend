@@ -5,27 +5,45 @@ const helmet = require("helmet");
 const morgan = require("morgan");
 const path = require("path");
 const mongoose = require("mongoose");
+const vtuAfricaService   = require("./services/vtuAfricaService");
+const pricingService     = require("./services/pricingService");
+const { runReconciliation }    = require("./util/reconciliationJob");
+const { checkBalance }         = require("./util/vtuAfricaMonitor");
+const { runMarginSanityCheck } = require("./util/marginSanityCheck");
 
 const connectDB = require("./config/db");
 const { apiLimiter } = require("./middleware/rateLimiter");
 const errorHandler = require("./middleware/errorHandler");
 const verificationRoutes = require('./routes/verificationRoutes');
 const referralRoutes = require('./routes/referralRoutes');
-const bookingRoutes = require('./routes/bookingRoutes');
+const bookingRoutes = require('./routes/BookingRoutes');
 // flightRoutes removed — Amadeus deprecated, Travu replacement pending
 
 
 
 const startServer = async () => {
   try {
-    // 1️⃣ Connect to MongoDB first
+    // 1️⃣ Validate configs before accepting traffic
+    vtuAfricaService.validateStartup();
+    pricingService.logStartup();
+
+    // 2️⃣ Connect to MongoDB first
     await connectDB();
     console.log("✅ MongoDB connected successfully");
 
-    // 2️⃣ Initialize Express app
+    // 3️⃣ Initialize Express app
     const app = express();
 
-    // 3️⃣ Apply middlewares
+    // 4️⃣ Apply middlewares
+    // The VTU Africa webhook route gets express.raw() BEFORE the global
+    // express.json() parser. This preserves the raw Buffer so the webhook
+    // controller can verify the MD5 apikey hash against the original bytes.
+    // All other routes are unaffected — they still receive parsed JSON.
+    app.use(
+      '/api/vtu-africa/webhook',
+      express.raw({ type: '*/*' })
+    );
+
     app.use(express.json({ limit: "2mb" }));
 
     const allowedOrigins = process.env.ALLOWED_ORIGINS
@@ -49,15 +67,15 @@ const startServer = async () => {
     app.use(helmet());
     app.use(morgan("dev"));
 
-    // 4️⃣ Static folder
+    // 5️⃣ Static folder
     app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
-    // 5️⃣ Rate limiters
+    // 6️⃣ Rate limiters
     app.use("/api/auth", apiLimiter);
     app.use("/api/kyc", apiLimiter);
 
 
-    // 6️⃣ Routes
+    // 7️⃣ Routes
     app.use("/api/auth", require("./routes/authRoutes"));
     app.use("/api/kyc", require("./routes/kycRoutes"));
     app.use("/api/pin", require("./routes/pinRoutes"));
@@ -66,15 +84,43 @@ const startServer = async () => {
     app.use('/api/verification', verificationRoutes);
     app.use('/api/referral', referralRoutes);
     app.use('/api/bookings', bookingRoutes);
+    app.use('/api/invoices', require('./routes/invoiceRoutes'));
     // /api/flights removed — Amadeus deprecated, Travu replacement pending
 
-    // 7️⃣ Health endpoint
+    // VTU Africa — exam pins, betting wallet funding, inbound webhooks
+    app.use('/api/exam-pins',   require('./routes/examPinRoutes'));
+    app.use('/api/betting',     require('./routes/bettingRoutes'));
+    app.use('/api/vtu-africa',  require('./routes/vtuAfricaRoutes'));
+
+    // Admin — revenue dashboard
+    app.use('/api/admin/revenue', require('./routes/revenueRoutes'));
+
+    // Subscriptions
+    app.use('/api/subscriptions', require('./routes/subscriptionRoutes'));
+
+    // 8️⃣ Health endpoint
     app.get("/health", (req, res) => res.json({ ok: true }));
 
-    // 8️⃣ Global error handler (must be last)
+    // 9️⃣ Global error handler (must be last)
     app.use(errorHandler);
 
-    // 9️⃣ Start server
+    // 🔟 Background jobs
+    // Reconciliation: every 30 minutes — resolves pending VTU Africa transactions
+    setInterval(() => runReconciliation().catch(err =>
+      console.error('[reconciliation] Unhandled error:', err.message)
+    ), 30 * 60 * 1000);
+
+    // Balance monitor: every hour — alerts ops when VTU Africa balance is low
+    setInterval(() => checkBalance().catch(err =>
+      console.error('[vtuAfricaMonitor] Unhandled error:', err.message)
+    ), 60 * 60 * 1000);
+
+    // Margin sanity check: once per day at ~midnight
+    setInterval(() => runMarginSanityCheck().catch(err =>
+      console.error('[marginSanity] Unhandled error:', err.message)
+    ), 24 * 60 * 60 * 1000);
+
+    // 1️⃣1️⃣ Start server
     const PORT = process.env.PORT || 5000;
     app.listen(PORT, () =>
       console.log(`🚀 Server running in ${process.env.NODE_ENV} mode on port ${PORT}`)
@@ -82,6 +128,7 @@ const startServer = async () => {
   } catch (err) {
     // 🧰 SAFER: handle undefined or non-Error cases
     console.error("❌ Failed to start server:", err?.message || err);
+    if (err?.stack) console.error(err.stack);
     process.exit(1);
   }
 };

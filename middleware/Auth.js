@@ -6,7 +6,7 @@ const User = require('../models/user');
  * Protect Middleware
  * Authenticates user via JWT token
  * Adds user object to req.user
- */
+ */ 
 const protect = async (req, res, next) => {
   try {
     let token;

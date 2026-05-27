@@ -55,8 +55,7 @@ const transactionSchema = new mongoose.Schema({
       // VTU Africa services
       "airtime_conversion",
       "betting",
-      // Future
-      "p2p_transfer",
+      "exam_pin",
     ],
     required: true,
     index: true,
@@ -185,6 +184,53 @@ const transactionSchema = new mongoose.Schema({
   currency: {
     type: String,
     default: "NGN",
+  },
+
+  // ============================================
+  // REVENUE TRACKING (Pricing Service fields)
+  // Populated at transaction creation time — never recomputed retroactively.
+  // Pre-existing transactions have marginType:'unknown' and numeric fields at 0.
+  // ============================================
+  provider: {
+    type: String,
+    enum: ['vtpass', 'vtu-africa', 'kora-pay'],
+  },
+  userPaid: {
+    type: Number,
+    default: 0,
+  },
+  providerCost: {
+    type: Number,
+    default: 0,
+  },
+  providerFee: {
+    type: Number,
+    default: 0,
+  },
+  recipientFee: {
+    type: Number,
+    default: 0,
+  },
+  ourMargin: {
+    type: Number,
+    default: 0,
+  },
+  marginType: {
+    type: String,
+    enum: ['markup', 'service_fee', 'mixed', 'unknown'],
+    default: 'unknown',
+  },
+  forSomeoneElse: {
+    type: Boolean,
+    default: false,
+  },
+  // VTU Africa only — 0 for all other providers
+  vtuAfricaCommission: {
+    type: Number,
+    default: 0,
+  },
+  pricingConfigVersion: {
+    type: String,
   },
   
   // ============================================

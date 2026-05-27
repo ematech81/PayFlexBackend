@@ -1,5 +1,8 @@
 const bcrypt = require("bcryptjs");
+const User   = require("../models/user");
 
+// transactionPinHash has select:false in the User schema, so protect() never
+// loads it. We must fetch it explicitly here rather than reading req.user.
 module.exports = async function verifyPin(req, res, next) {
   try {
     const { pin } = req.body;
@@ -8,20 +11,18 @@ module.exports = async function verifyPin(req, res, next) {
       return res.status(400).json({ message: "Transaction PIN is required" });
     }
 
-    if (!req.user?.transactionPinHash) {
+    const user = await User.findById(req.user.id).select("+transactionPinHash");
+
+    if (!user?.transactionPinHash) {
       return res.status(403).json({ message: "Transaction PIN not set" });
     }
 
-    const isMatch = await bcrypt.compare(
-      String(pin),
-      req.user.transactionPinHash
-    );
+    const isMatch = await bcrypt.compare(String(pin), user.transactionPinHash);
 
     if (!isMatch) {
       return res.status(403).json({ message: "Invalid Transaction PIN" });
     }
 
-    // If PIN is correct, move to next middleware/controller
     next();
   } catch (error) {
     next(error);
