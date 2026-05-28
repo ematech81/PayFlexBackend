@@ -58,7 +58,7 @@ async function _post(path, body = {}) {
         timeout: TIMEOUT_MS,
         headers: {
           'Content-Type': 'application/json',
-          'X-Api-Key': key,
+          'X_API_KEY': key,
         },
       });
 
@@ -143,8 +143,8 @@ async function _get(path) {
  */
 async function validateBusinessName({ proposedName, transactionRef }) {
   return _post('/api/vas/engine/pre/bn/validation', {
-    businessName:   proposedName,
-    transactionRef: transactionRef || `VAS${Date.now()}`,
+    proposedOption1: proposedName,
+    transactionRef:  transactionRef || `VAS${Date.now()}`,
   });
 }
 
@@ -187,8 +187,11 @@ async function getCompanyByRC({ rcNumber }) {
 /**
  * Validation: look up company by name.
  */
-async function getCompanyByName({ name }) {
-  return _post('/api/vas/validation/secure/company-name', { name });
+async function getCompanyByName({ name, rcNumber }) {
+  return _post('/api/vas/validation/company/name', {
+    entity_name: name,
+    ...(rcNumber && { rc_number: rcNumber }),
+  });
 }
 
 /**
