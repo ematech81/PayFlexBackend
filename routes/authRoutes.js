@@ -15,13 +15,15 @@ const {
   setTransactionPin,
   resetTransactionPin,
   resetLoginPin,
-  // New controllers (you'll create)
   forgotLoginPin,
   verifyResetCode,
   updateRequirePinOnOpen,
   setPinAfterReset,
   addTestFunds,
-  changeLoginPin
+  changeLoginPin,
+  updateProfile,
+  changeTransactionPin,
+  deleteAccount,
 } = require("../controllers/authController");
 const { protect } = require("../middleware/auth");
 const validate  = require("../middleware/validate");
@@ -367,5 +369,39 @@ router.post(
 
 // 12. Me
 router.get("/me", protect, me);
+
+// 13. Update Profile
+router.put(
+  "/profile",
+  protect,
+  [
+    body("firstName").optional().trim().isLength({ min: 2, max: 50 }).withMessage("First name must be 2-50 characters"),
+    body("lastName").optional().trim().isLength({ min: 2, max: 50 }).withMessage("Last name must be 2-50 characters"),
+    body("email").optional({ checkFalsy: true }).trim().isEmail().withMessage("Invalid email address").normalizeEmail(),
+  ],
+  validate,
+  updateProfile
+);
+
+// 14. Change Transaction PIN
+router.post(
+  "/change-transaction-pin",
+  protect,
+  [
+    body("currentPin").isLength({ min: 4, max: 4 }).matches(/^\d{4}$/).withMessage("Current PIN must be 4 digits"),
+    body("newPin").isLength({ min: 4, max: 4 }).matches(/^\d{4}$/).withMessage("New PIN must be 4 digits"),
+  ],
+  validate,
+  changeTransactionPin
+);
+
+// 15. Delete Account
+router.post(
+  "/delete-account",
+  protect,
+  [body("pin").isLength({ min: 6, max: 6 }).matches(/^\d{6}$/).withMessage("PIN must be 6 digits")],
+  validate,
+  deleteAccount
+);
 
 module.exports = router; 

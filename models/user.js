@@ -48,6 +48,9 @@ const userSchema = new mongoose.Schema(
     walletBalance: { type: Number, default: 0, min: 0 },
     kyc: { type: String, enum: ['pending', 'verified', 'rejected'], default: 'pending' },
 
+    // Profile
+    profileImage: { type: String, default: null },
+
     // Roles & Metadata
     roles: { type: [String], default: ['user'] },
     lastLogin: { type: Date },

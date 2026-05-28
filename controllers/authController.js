@@ -1253,6 +1253,103 @@ exports.resetLoginPin = async (req, res) => {
 };
 
 
+exports.updateProfile = async (req, res, next) => {
+  try {
+    const userId = req.user.id || req.user._id;
+    const { firstName, lastName, email } = req.body;
+
+    const updates = {};
+    if (firstName && firstName.trim()) updates.firstName = firstName.trim();
+    if (lastName && lastName.trim()) updates.lastName = lastName.trim();
+    if (email && email.trim()) updates.email = email.trim().toLowerCase();
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ success: false, message: 'No valid fields to update' });
+    }
+
+    const user = await User.findByIdAndUpdate(userId, updates, { new: true, runValidators: true });
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+    return res.json({
+      success: true,
+      message: 'Profile updated successfully',
+      user: {
+        id: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        phone: maskPhone(user.phone),
+        profileImage: user.profileImage,
+      },
+    });
+  } catch (error) {
+    if (error.code === 11000) {
+      return res.status(409).json({ success: false, message: 'Email already in use' });
+    }
+    next(error);
+  }
+};
+
+exports.changeTransactionPin = async (req, res, next) => {
+  try {
+    const { currentPin, newPin } = req.body;
+    const userId = req.user.id || req.user._id;
+
+    if (!currentPin || !/^\d{4}$/.test(currentPin)) {
+      return res.status(400).json({ success: false, message: 'Current PIN must be 4 digits' });
+    }
+    if (!newPin || !/^\d{4}$/.test(newPin)) {
+      return res.status(400).json({ success: false, message: 'New PIN must be 4 digits' });
+    }
+    if (currentPin === newPin) {
+      return res.status(400).json({ success: false, message: 'New PIN must differ from current PIN' });
+    }
+
+    const user = await User.findById(userId).select('+transactionPinHash');
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    if (!user.transactionPinHash) {
+      return res.status(400).json({ success: false, message: 'No transaction PIN set. Please set one first.' });
+    }
+
+    const isMatch = await bcrypt.compare(String(currentPin), user.transactionPinHash);
+    if (!isMatch) {
+      return res.status(400).json({ success: false, message: 'Current PIN is incorrect' });
+    }
+
+    user.transactionPinHash = String(newPin);
+    await user.save();
+
+    return res.json({ success: true, message: 'Transaction PIN changed successfully' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.deleteAccount = async (req, res, next) => {
+  try {
+    const { pin } = req.body;
+    const userId = req.user.id || req.user._id;
+
+    if (!pin || !/^\d{6}$/.test(pin)) {
+      return res.status(400).json({ success: false, message: 'Your 6-digit login PIN is required to delete your account' });
+    }
+
+    const user = await User.findById(userId).select('+pinHash');
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+    const isMatch = await bcrypt.compare(String(pin), user.pinHash);
+    if (!isMatch) {
+      return res.status(400).json({ success: false, message: 'Incorrect PIN' });
+    }
+
+    await User.findByIdAndUpdate(userId, { isActive: false, email: null, phone: `deleted_${userId}` });
+
+    return res.json({ success: true, message: 'Account deleted successfully' });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // adding fund to wallet balance
 
 exports.addTestFunds = async (req, res, next) => {
