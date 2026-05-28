@@ -58,7 +58,7 @@ async function _post(path, body = {}) {
         timeout: TIMEOUT_MS,
         headers: {
           'Content-Type': 'application/json',
-          'X_API_KEY': key,
+          'X-Api-Key': key,
         },
       });
 
@@ -143,7 +143,7 @@ async function _get(path) {
  */
 async function validateBusinessName({ proposedName, transactionRef }) {
   return _post('/api/vas/engine/pre/bn/validation', {
-    rcNumber:       proposedName,  // VAS uses rcNumber field for the name check
+    businessName:   proposedName,
     transactionRef: transactionRef || `VAS${Date.now()}`,
   });
 }
