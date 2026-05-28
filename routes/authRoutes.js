@@ -24,6 +24,7 @@ const {
   updateProfile,
   changeTransactionPin,
   deleteAccount,
+  uploadProfilePhoto,
 } = require("../controllers/authController");
 const { protect } = require("../middleware/auth");
 const validate  = require("../middleware/validate");
@@ -403,5 +404,8 @@ router.post(
   validate,
   deleteAccount
 );
+
+// 16. Upload Profile Photo
+router.post("/profile/photo", protect, uploadProfilePhoto);
 
 module.exports = router; 

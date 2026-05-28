@@ -3,7 +3,15 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
+const { v2: cloudinary } = require("cloudinary");
 const User = require("../models/user");
+
+// Configure Cloudinary (reads from env at call time)
+cloudinary.config({
+  cloud_name:  process.env.CLOUDINARY_CLOUD_NAME,
+  api_key:     process.env.CLOUDINARY_API_KEY,
+  api_secret:  process.env.CLOUDINARY_API_SECRET,
+});
 
 
 
@@ -1350,6 +1358,44 @@ exports.deleteAccount = async (req, res, next) => {
   }
 };
 
+exports.uploadProfilePhoto = async (req, res, next) => {
+  try {
+    const userId = req.user.id || req.user._id;
+
+    // Accept base64 data URI sent from React Native
+    const { imageBase64 } = req.body;
+    if (!imageBase64) {
+      return res.status(400).json({ success: false, message: 'imageBase64 is required' });
+    }
+
+    if (!process.env.CLOUDINARY_CLOUD_NAME || process.env.CLOUDINARY_CLOUD_NAME === 'your_cloud_name') {
+      return res.status(503).json({ success: false, message: 'Photo upload is not configured yet.' });
+    }
+
+    const result = await cloudinary.uploader.upload(imageBase64, {
+      folder:         'payflex/profile_photos',
+      public_id:      `user_${userId}`,
+      overwrite:      true,
+      transformation: [{ width: 400, height: 400, crop: 'fill', gravity: 'face' }],
+    });
+
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { profileImage: result.secure_url },
+      { new: true }
+    );
+
+    return res.json({
+      success: true,
+      message: 'Profile photo updated',
+      profileImage: user.profileImage,
+    });
+  } catch (error) {
+    console.error('❌ Upload profile photo error:', error.message);
+    next(error);
+  }
+};
+
 // adding fund to wallet balance
 
 exports.addTestFunds = async (req, res, next) => {
@@ -1430,8 +1476,9 @@ exports.me = async (req, res, next) => {
         kyc: u.kyc,
         walletBalance: u.walletBalance || 0,
         roles: u.roles,
+        profileImage: u.profileImage || null,
       },
-      transactionPinSet: !!u.transactionPinHash  // ← This will now work correctly!
+      transactionPinSet: !!u.transactionPinHash
     });
   } catch (e) {
     console.error('❌ /me endpoint error:', e);
