@@ -86,6 +86,32 @@ const config = {
     examPin:          parseInt(process.env.PRICING_RECIPIENT_FEE_EXAM_PIN)          || 50,
     betting:          parseInt(process.env.PRICING_RECIPIENT_FEE_BETTING)           || 20,
   },
+
+  // ─── CAC VAS (Business Registration & Validation) ─────────────────────────
+  // User-facing prices (env-overridable). VAS costs are fixed by government schedule.
+  cac: {
+    // Business Name Registration
+    bnStandard:        parseInt(process.env.PRICING_CAC_BN_STANDARD)          || 35000,
+    bnPriority:        parseInt(process.env.PRICING_CAC_BN_PRIORITY)          || 38000,
+    bnCertificate:     parseInt(process.env.PRICING_CAC_BN_CERTIFICATE)       || 500,
+    bnStatusReport:    parseInt(process.env.PRICING_CAC_BN_STATUS_REPORT)     || 300,
+    // LLC (future — prices held for when LLC docs are available)
+    llcNameReservation: parseInt(process.env.PRICING_CAC_LLC_NAME_RESERVATION) || 5000,
+    llcRegistration:   parseInt(process.env.PRICING_CAC_LLC_REGISTRATION)     || 80000,
+    // Business Validation
+    validateBasic:     parseInt(process.env.PRICING_CAC_VALIDATE_BASIC)       || 500,
+    validateVRC:       parseInt(process.env.PRICING_CAC_VALIDATE_VRC)         || 15000,
+    validatePremium:   parseInt(process.env.PRICING_CAC_VALIDATE_PREMIUM)     || 20000,
+    // VAS costs (government-fixed, not env-overridable)
+    costs: {
+      bnStandard:    27000,
+      bnPriority:    27500, // 27000 + 500 priority surcharge
+      bnCertificate: 0,
+      bnStatusReport:0,
+      validateBasic: 100,
+      validateVRC:   7500,
+    },
+  },
 };
 
 // ─── Config version ───────────────────────────────────────────────────────────
@@ -381,6 +407,40 @@ function getCatalog() {
 }
 
 /**
+ * CAC VAS pricing.
+ *
+ * @param {'bn_standard'|'bn_priority'|'bn_certificate'|'bn_status_report'|
+ *         'validate_basic'|'validate_vrc'|'validate_premium'} serviceType
+ * @returns {{ userPays, vasCost, ourMargin, provider }}
+ */
+function getCACPrice(serviceType) {
+  const c = config.cac;
+  const map = {
+    bn_standard:     { userPays: c.bnStandard,        vasCost: c.costs.bnStandard },
+    bn_priority:     { userPays: c.bnPriority,        vasCost: c.costs.bnPriority },
+    bn_certificate:  { userPays: c.bnCertificate,     vasCost: c.costs.bnCertificate },
+    bn_status_report:{ userPays: c.bnStatusReport,    vasCost: c.costs.bnStatusReport },
+    validate_basic:  { userPays: c.validateBasic,     vasCost: c.costs.validateBasic },
+    validate_vrc:    { userPays: c.validateVRC,        vasCost: c.costs.validateVRC },
+    validate_premium:{ userPays: c.validatePremium,   vasCost: c.costs.validateVRC }, // same VAS cost
+  };
+
+  const entry = map[serviceType];
+  if (!entry) {
+    const err = new Error(`Unknown CAC service type: ${serviceType}`);
+    err.statusCode = 400;
+    throw err;
+  }
+
+  return {
+    userPays:  entry.userPays,
+    vasCost:   entry.vasCost,
+    ourMargin: entry.userPays - entry.vasCost,
+    provider:  'cac-vas',
+  };
+}
+
+/**
  * Internal catalog — includes ourCost and margin detail.
  * Admin-only endpoint — never expose to users.
  */
@@ -395,6 +455,7 @@ function getInternalCatalog() {
       electricityConfig:  config.electricity,
       bettingConfig:      config.betting,
       recipientFees:      config.recipientFees,
+      cacConfig:          config.cac,
       configVersion:      CONFIG_VERSION,
     },
   };
@@ -416,6 +477,8 @@ module.exports = {
   getExamPinPrice,
   getBettingPrice,
   getAirtime2CashRate,
+
+  getCACPrice,
 
   getCatalog,
   getInternalCatalog,

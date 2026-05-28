@@ -56,6 +56,9 @@ const transactionSchema = new mongoose.Schema({
       "airtime_conversion",
       "betting",
       "exam_pin",
+      // CAC VAS services
+      "cac_registration",
+      "cac_validation",
     ],
     required: true,
     index: true,
@@ -193,7 +196,7 @@ const transactionSchema = new mongoose.Schema({
   // ============================================
   provider: {
     type: String,
-    enum: ['vtpass', 'vtu-africa', 'kora-pay'],
+    enum: ['vtpass', 'vtu-africa', 'kora-pay', 'cac-vas'],
   },
   userPaid: {
     type: Number,

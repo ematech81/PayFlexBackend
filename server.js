@@ -44,6 +44,7 @@ const startServer = async () => {
     app.use('/api/vtu-africa/webhook',  express.raw({ type: '*/*' }));
     app.use('/api/payment/webhook',     express.raw({ type: '*/*' }));
     app.use('/api/webhooks/korapay',    express.raw({ type: '*/*' }));
+    app.use('/api/cac/webhook',         express.raw({ type: '*/*' }));
 
     app.use(express.json({ limit: "2mb" }));
 
@@ -94,6 +95,9 @@ const startServer = async () => {
     app.use('/api/exam-pins',   require('./routes/examPinRoutes'));
     app.use('/api/betting',     require('./routes/bettingRoutes'));
     app.use('/api/vtu-africa',  require('./routes/vtuAfricaRoutes'));
+
+    // CAC VAS — business name registration & validation
+    app.use('/api/cac', require('./routes/cacRoutes'));
 
     // Admin — revenue dashboard
     app.use('/api/admin/revenue', require('./routes/revenueRoutes'));
