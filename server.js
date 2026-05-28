@@ -99,8 +99,9 @@ const startServer = async () => {
     // CAC VAS — business name registration & validation
     app.use('/api/cac', require('./routes/cacRoutes'));
 
-    // Admin — revenue dashboard
+    // Admin
     app.use('/api/admin/revenue', require('./routes/revenueRoutes'));
+    app.use('/api/admin',         require('./routes/adminRoutes'));
 
     // Subscriptions
     app.use('/api/subscriptions', require('./routes/subscriptionRoutes'));

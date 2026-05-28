@@ -255,7 +255,13 @@ const transactionSchema = new mongoose.Schema({
   },
   refundedAt: {
     type: Date,
-    // When refund was processed (if applicable)
+  },
+  refundedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  },
+  refundNote: {
+    type: String,
   },
   createdAt: {
     type: Date,
