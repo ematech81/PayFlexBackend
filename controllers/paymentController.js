@@ -22,12 +22,17 @@ const mongoose = require('mongoose');
 const crypto         = require('crypto');
 const Transaction    = require('../models/transaction');
 const User           = require('../models/user');
-const pricingService = require('../services/pricingService');
-const vtuAfricaService = require('../services/vtuAfricaService');
+const pricingService         = require('../services/pricingService');
+const vtuAfricaService       = require('../services/vtuAfricaService');
+const vtuAfricaBillsService  = require('../services/vtuAfricaBillsService');
+const DataPlan               = require('../models/DataPlan');
 const {
   deductWalletBalance: _deductWallet,
   refundWalletBalance: _refundWallet,
 } = require('../util/paymentHelper');
+
+// Returns current bills provider — 'vtuafrica' (default) or 'vtpass'
+const _billsProvider = () => (process.env.BILLS_PROVIDER || 'vtuafrica').toLowerCase();
 
 // ─── VTpass API clients ───────────────────────────────────────────────────────
 const vtpassApi = axios.create({
@@ -150,13 +155,40 @@ const buyAirtime = async (req, res) => {
       session.endSession();
     }
 
-    // Phase 2: Call VTpass
-    let result;
+    // Phase 2: Call provider
     try {
-      result = await _callVtpass({ request_id, serviceID, amount: String(amount), phone: phoneNumber });
-    } catch (vtpassErr) {
-      console.error('[paymentController] VTpass airtime error after debit:', vtpassErr.message);
-      txDoc.status = 'failed'; txDoc.failureReason = vtpassErr.message;
+      if (_billsProvider() === 'vtpass') {
+        // ── VTpass path (unchanged) ──────────────────────────────────────────
+        const result = await _callVtpass({ request_id, serviceID, amount: String(amount), phone: phoneNumber });
+        if (!result.success) {
+          txDoc.status = 'failed'; txDoc.failureReason = result.message; txDoc.response = result.rawResponse;
+          await txDoc.save();
+          try { await _refundWallet(user, pricing.userPays); } catch (e) {
+            console.error('[paymentController] CRITICAL: airtime refund failed:', { reference, amount: pricing.userPays, error: e.message });
+          }
+          return res.status(400).json({ success: false, message: result.message || 'Airtime purchase failed. Your wallet has been refunded.' });
+        }
+        txDoc.status = 'success'; txDoc.transactionId = result.transactionId; txDoc.response = result.rawResponse;
+        await txDoc.save();
+      } else {
+        // ── VTU Africa path ──────────────────────────────────────────────────
+        const vtuNetwork = network.toLowerCase() === 'etisalat' ? '9mobile' : network.toLowerCase();
+        const vtuRef     = `payflex-air-${crypto.randomUUID()}`;
+        const vtuResult  = await vtuAfricaBillsService.purchaseAirtime({
+          network: vtuNetwork,
+          phone:   phoneNumber,
+          amount:  Number(amount),
+          ref:     vtuRef,
+        });
+        txDoc.status        = 'success';
+        txDoc.transactionId = vtuResult.referenceId;
+        txDoc.response      = vtuResult.raw;
+        txDoc.vtuAfricaCommission = vtuResult.vtuAfricaCommission;
+        await txDoc.save();
+      }
+    } catch (providerErr) {
+      console.error('[paymentController] airtime provider error after debit:', providerErr.message);
+      txDoc.status = 'failed'; txDoc.failureReason = providerErr.message;
       await txDoc.save();
       try { await _refundWallet(user, pricing.userPays); } catch (e) {
         console.error('[paymentController] CRITICAL: airtime refund failed:', { reference, amount: pricing.userPays, error: e.message });
@@ -164,23 +196,11 @@ const buyAirtime = async (req, res) => {
       return res.status(502).json({ success: false, message: 'Service provider is unavailable. Your wallet has been refunded.' });
     }
 
-    if (!result.success) {
-      txDoc.status = 'failed'; txDoc.failureReason = result.message; txDoc.response = result.rawResponse;
-      await txDoc.save();
-      try { await _refundWallet(user, pricing.userPays); } catch (e) {
-        console.error('[paymentController] CRITICAL: airtime refund failed:', { reference, amount: pricing.userPays, error: e.message });
-      }
-      return res.status(400).json({ success: false, message: result.message || 'Airtime purchase failed. Your wallet has been refunded.' });
-    }
-
-    txDoc.status = 'success'; txDoc.transactionId = result.transactionId; txDoc.response = result.rawResponse;
-    await txDoc.save();
-
     return res.json({
-      success:   true,
-      message:   `₦${Number(amount).toLocaleString()} airtime sent to ${phoneNumber}.`,
+      success: true,
+      message: `₦${Number(amount).toLocaleString()} airtime sent to ${phoneNumber}.`,
       reference,
-      data:      txDoc,
+      data:    txDoc,
     });
 
   } catch (error) {
@@ -195,31 +215,62 @@ const getDataPlans = async (req, res) => {
     const { network } = req.query;
     if (!network) return res.status(400).json({ success: false, message: 'Network parameter is required.' });
 
-    const serviceMap = {
-      mtn: 'mtn-data', airtel: 'airtel-data', glo: 'glo-data',
-      '9mobile': 'etisalat-data', etisalat: 'etisalat-data',
-      'mtn-data': 'mtn-data', 'airtel-data': 'airtel-data',
-      'glo-data': 'glo-data', 'etisalat-data': 'etisalat-data',
-    };
-    const serviceID = serviceMap[network.toLowerCase()];
-    if (!serviceID) return res.status(400).json({ success: false, message: `Invalid network: ${network}` });
+    if (_billsProvider() === 'vtpass') {
+      // ── VTpass path (unchanged) ──────────────────────────────────────────
+      const serviceMap = {
+        mtn: 'mtn-data', airtel: 'airtel-data', glo: 'glo-data',
+        '9mobile': 'etisalat-data', etisalat: 'etisalat-data',
+        'mtn-data': 'mtn-data', 'airtel-data': 'airtel-data',
+        'glo-data': 'glo-data', 'etisalat-data': 'etisalat-data',
+      };
+      const serviceID = serviceMap[network.toLowerCase()];
+      if (!serviceID) return res.status(400).json({ success: false, message: `Invalid network: ${network}` });
 
-    const response   = await vtpassApiGet.get(`/service-variations?serviceID=${serviceID}`, { timeout: 15000 });
-    let variations   = response.data?.content?.varations || response.data?.content?.variations || [];
-    variations       = variations.filter(v => !['glo-wtf-25','glo-wtf-50','glo-wtf-100','Glo-opera-25','Glo-opera-50','Glo-opera-100','mtn-xtratalk-300'].includes(v.variation_code));
+      const response   = await vtpassApiGet.get(`/service-variations?serviceID=${serviceID}`, { timeout: 15000 });
+      let variations   = response.data?.content?.varations || response.data?.content?.variations || [];
+      variations       = variations.filter(v => !['glo-wtf-25','glo-wtf-50','glo-wtf-100','Glo-opera-25','Glo-opera-50','Glo-opera-100','mtn-xtratalk-300'].includes(v.variation_code));
+
+      const catalogData = pricingService.getCatalog().data;
+      const plans = variations.map(v => {
+        const vtpassCost = parseFloat(v.variation_amount || 0);
+        const rawMargin  = Math.round(vtpassCost * parseFloat(catalogData.markup));
+        const margin     = Math.max(rawMargin, catalogData.minMargin);
+        return { ...v, variation_amount: vtpassCost, userPays: vtpassCost + margin, convenienceFee: margin };
+      });
+      return res.json({ success: true, content: { variations: plans }, data: { content: { variations: plans } } });
+    }
+
+    // ── VTU Africa path — fetch from DB ─────────────────────────────────────
+    const networkNorm = { mtn: 'MTN', airtel: 'Airtel', glo: 'GLO', '9mobile': '9Mobile', etisalat: '9Mobile' };
+    const dbNetwork   = networkNorm[network.toLowerCase()];
+    if (!dbNetwork) return res.status(400).json({ success: false, message: `Invalid network: ${network}` });
+
+    const dbPlans = await DataPlan.find({ network: dbNetwork, status: 'Active', provider: 'vtuafrica' })
+      .sort({ costPrice: 1 })
+      .lean();
 
     const catalogData = pricingService.getCatalog().data;
-    const plans = variations.map(v => {
-      const vtpassCost = parseFloat(v.variation_amount || 0);
-      const rawMargin  = Math.round(vtpassCost * parseFloat(catalogData.markup));
-      const margin     = Math.max(rawMargin, catalogData.minMargin);
-      return { ...v, variation_amount: vtpassCost, userPays: vtpassCost + margin, convenienceFee: margin };
+    const plans = dbPlans.map(plan => {
+      const pricing = pricingService.getDataPrice({ vtpassCost: plan.costPrice, forSomeoneElse: false });
+      return {
+        variation_code:   plan.dataPlanCode,
+        variation_amount: plan.costPrice,
+        name:             `${plan.size} — ${plan.validity}`,
+        description:      plan.description,
+        size:             plan.size,
+        validity:         plan.validity,
+        serviceCode:      plan.serviceCode,
+        serviceType:      plan.serviceType,
+        userPays:         pricing.userPays,
+        convenienceFee:   pricing.ourMargin,
+      };
     });
 
-    res.json({ success: true, content: { variations: plans }, data: { content: { variations: plans } } });
+    return res.json({ success: true, content: { variations: plans }, data: { content: { variations: plans } } });
+
   } catch (error) {
     console.error('[paymentController] getDataPlans error:', error.message);
-    res.status(500).json({ success: false, message: error.response?.data?.response_description || 'Failed to fetch data plans.' });
+    res.status(500).json({ success: false, message: 'Failed to fetch data plans.' });
   }
 };
 
@@ -277,27 +328,55 @@ const buyDataBundle = async (req, res) => {
       session.endSession();
     }
 
-    let result;
+    // Phase 2: Call provider
     try {
-      result = await _callVtpass({ request_id, serviceID, billersCode: phoneNumber, variation_code, amount: String(amount), phone: phoneNumber });
-    } catch (vtpassErr) {
-      txDoc.status = 'failed'; txDoc.failureReason = vtpassErr.message; await txDoc.save();
+      if (_billsProvider() === 'vtpass') {
+        // ── VTpass path (unchanged) ──────────────────────────────────────────
+        const result = await _callVtpass({ request_id, serviceID, billersCode: phoneNumber, variation_code, amount: String(amount), phone: phoneNumber });
+        if (!result.success) {
+          txDoc.status = 'failed'; txDoc.failureReason = result.message; txDoc.response = result.rawResponse; await txDoc.save();
+          try { await _refundWallet(user, pricing.userPays); } catch (e) {
+            console.error('[paymentController] CRITICAL: data refund failed:', { reference, error: e.message });
+          }
+          return res.status(400).json({ success: false, message: result.message || 'Data purchase failed. Your wallet has been refunded.' });
+        }
+        txDoc.status = 'success'; txDoc.transactionId = result.transactionId; txDoc.response = result.rawResponse;
+        await txDoc.save();
+      } else {
+        // ── VTU Africa path ──────────────────────────────────────────────────
+        // variation_code from frontend is the dataPlanCode when using VTU Africa
+        const networkNorm = { mtn: 'MTN', airtel: 'Airtel', glo: 'GLO', '9mobile': '9Mobile', etisalat: '9Mobile' };
+        const dbNetwork   = networkNorm[network.toLowerCase()];
+        const plan        = await DataPlan.findOne({ network: dbNetwork, dataPlanCode: variation_code, status: 'Active', provider: 'vtuafrica' });
+
+        if (!plan) {
+          txDoc.status = 'failed'; txDoc.failureReason = 'Data plan not found'; await txDoc.save();
+          await _refundWallet(user, pricing.userPays);
+          return res.status(400).json({ success: false, message: 'Selected data plan is no longer available. Your wallet has been refunded.' });
+        }
+
+        const vtuRef    = `payflex-data-${crypto.randomUUID()}`;
+        const vtuResult = await vtuAfricaBillsService.purchaseData({
+          service:      plan.serviceCode,
+          MobileNumber: phoneNumber,
+          DataPlan:     plan.dataPlanCode,
+          costPrice:    plan.costPrice,
+          ref:          vtuRef,
+        });
+        txDoc.status        = 'success';
+        txDoc.transactionId = vtuResult.referenceId;
+        txDoc.response      = vtuResult.raw;
+        await txDoc.save();
+      }
+    } catch (providerErr) {
+      console.error('[paymentController] data provider error after debit:', providerErr.message);
+      txDoc.status = 'failed'; txDoc.failureReason = providerErr.message; await txDoc.save();
       try { await _refundWallet(user, pricing.userPays); } catch (e) {
         console.error('[paymentController] CRITICAL: data refund failed:', { reference, error: e.message });
       }
-      return res.status(502).json({ success: false, message: 'Service provider is unavailable. Your wallet has been refunded.' });
+      return res.status(502).json({ success: false, message: providerErr.message || 'Data purchase failed. Your wallet has been refunded.' });
     }
 
-    if (!result.success) {
-      txDoc.status = 'failed'; txDoc.failureReason = result.message; txDoc.response = result.rawResponse; await txDoc.save();
-      try { await _refundWallet(user, pricing.userPays); } catch (e) {
-        console.error('[paymentController] CRITICAL: data refund failed:', { reference, error: e.message });
-      }
-      return res.status(400).json({ success: false, message: result.message || 'Data purchase failed. Your wallet has been refunded.' });
-    }
-
-    txDoc.status = 'success'; txDoc.transactionId = result.transactionId; txDoc.response = result.rawResponse;
-    await txDoc.save();
     return res.json({ success: true, message: 'Data bundle purchased successfully.', reference, data: txDoc });
 
   } catch (error) {
