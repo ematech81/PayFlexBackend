@@ -25,6 +25,7 @@ const {
   changeTransactionPin,
   deleteAccount,
   uploadProfilePhoto,
+  savePushToken,
 } = require("../controllers/authController");
 const { protect } = require("../middleware/auth");
 const validate  = require("../middleware/validate");
@@ -407,5 +408,8 @@ router.post(
 
 // 16. Upload Profile Photo
 router.post("/profile/photo", protect, uploadProfilePhoto);
+
+// 17. Save Expo Push Token
+router.post("/push-token", protect, savePushToken);
 
 module.exports = router; 

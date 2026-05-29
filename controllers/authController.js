@@ -1358,6 +1358,16 @@ exports.deleteAccount = async (req, res, next) => {
   }
 };
 
+exports.savePushToken = async (req, res, next) => {
+  try {
+    const { token } = req.body;
+    const userId = req.user.id || req.user._id;
+    if (!token) return res.status(400).json({ success: false, message: 'token is required' });
+    await User.findByIdAndUpdate(userId, { expoPushToken: token });
+    return res.json({ success: true });
+  } catch (error) { next(error); }
+};
+
 exports.uploadProfilePhoto = async (req, res, next) => {
   try {
     const userId = req.user.id || req.user._id;

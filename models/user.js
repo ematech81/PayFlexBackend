@@ -51,6 +51,9 @@ const userSchema = new mongoose.Schema(
     // Profile
     profileImage: { type: String, default: null },
 
+    // Push notifications
+    expoPushToken: { type: String, default: null },
+
     // Roles & Metadata
     roles: { type: [String], default: ['user'] },
     lastLogin: { type: Date },

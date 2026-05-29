@@ -17,12 +17,13 @@
  * prevent their retry queue from flooding us with the same payload.
  */
 
-const mongoose           = require('mongoose');
-const vtuAfricaService   = require('../services/vtuAfricaService');
-const ExamPinTransaction = require('../models/ExamPinTransaction');
-const BettingTransaction = require('../models/BettingTransaction');
-const Transaction        = require('../models/transaction');
-const User               = require('../models/user');
+const mongoose              = require('mongoose');
+const vtuAfricaService      = require('../services/vtuAfricaService');
+const pushService           = require('../services/pushNotificationService');
+const ExamPinTransaction    = require('../models/ExamPinTransaction');
+const BettingTransaction    = require('../models/BettingTransaction');
+const Transaction           = require('../models/transaction');
+const User                  = require('../models/user');
 
 // ─── Main handler ─────────────────────────────────────────────────────────────
 const handleWebhook = async (req, res) => {
@@ -236,12 +237,14 @@ async function _processElectricityWebhook(txDoc, queryResult, payload) {
       txDoc.transactionId = d.ReferenceID || txDoc.transactionId;
       await txDoc.save();
 
-      // TODO: fire push notification to user: "Your electricity token is ready: {token}"
-      // Uncomment when push notification service is wired:
-      // await pushNotificationService.send(txDoc.userId, {
-      //   title: 'Electricity Token Ready',
-      //   body: token ? `Your token: ${token}` : 'Your electricity payment was successful.',
-      // });
+      // Fire push notification for electricity token
+      await pushService.sendToUser(txDoc.userId, {
+        title: 'Electricity Token Ready ⚡',
+        body: token
+          ? `Your token: ${token}`
+          : 'Your electricity payment was successful.',
+        data: { type: 'electricity_token', reference: ref, token: token || null },
+      });
 
     } else {
       txDoc.status       = 'failed';
