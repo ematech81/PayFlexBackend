@@ -101,7 +101,11 @@ const transactionSchema = new mongoose.Schema({
   },
   purchasedCode: {
     type: String,
-    // Token/code returned for certain services (e.g., TV, education)
+    // Token/code returned for certain services (e.g., TV, education, electricity)
+  },
+  tokenUnits: {
+    type: String,
+    // Unit value returned with electricity token (e.g. '25wat')
   },
   request_id: {
     type: String,

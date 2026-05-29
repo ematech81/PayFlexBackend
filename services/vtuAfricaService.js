@@ -582,4 +582,8 @@ module.exports = {
   parsePins,
   normalise,
   redactKey,
+
+  // Low-level HTTP client — exported so vtuAfricaBillsService can reuse it
+  // without duplicating key-management and retry logic.
+  vtuGet,
 };
