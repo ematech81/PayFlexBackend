@@ -60,12 +60,19 @@ const handleWebhook = async (req, res) => {
   const { queryResult } = verification;
 
   // ── Idempotency: find the matching local transaction ───────────────────────
-  // Check exam pins, betting, then Airtime2Cash (main Transaction model)
   const examTx    = await ExamPinTransaction.findOne({ ref });
   const bettingTx = examTx ? null : await BettingTransaction.findOne({ ref });
-  const a2cTx     = (examTx || bettingTx) ? null
-                  : await Transaction.findOne({ reference: ref, type: 'airtime_conversion' });
-  const txDoc     = examTx || bettingTx || a2cTx;
+
+  // Bills transactions use ref prefixes: payflex-elec-, payflex-air-, payflex-data-, payflex-tv-
+  const isElecRef = ref.startsWith('payflex-elec-');
+  const elecTx    = (!examTx && !bettingTx && isElecRef)
+                  ? await Transaction.findOne({ reference: ref, type: 'electricity' })
+                  : null;
+  const a2cTx     = (!examTx && !bettingTx && !elecTx)
+                  ? await Transaction.findOne({ reference: ref, type: 'airtime_conversion' })
+                  : null;
+
+  const txDoc = examTx || bettingTx || elecTx || a2cTx;
 
   if (!txDoc) {
     console.warn(`[vtuAfricaWebhook] No local transaction found for ref: ${ref}`);
@@ -87,6 +94,12 @@ const handleWebhook = async (req, res) => {
   // ── Update betting transaction ─────────────────────────────────────────────
   if (bettingTx) {
     await _processBettingWebhook(bettingTx, queryResult, payload);
+    return;
+  }
+
+  // ── Update electricity transaction + deliver token ────────────────────────
+  if (elecTx) {
+    await _processElectricityWebhook(elecTx, queryResult, payload);
     return;
   }
 
@@ -194,6 +207,50 @@ async function _processA2CWebhook(txDoc, queryResult) {
     console.error(`[vtuAfricaWebhook] Error processing A2C ref ${ref}:`, err.message);
   } finally {
     session.endSession();
+  }
+}
+
+// ─── Electricity webhook processing ──────────────────────────────────────────
+// Handles late token delivery for payflex-elec-* references.
+// The token may have already arrived in the API response (purchasedCode set).
+// If it arrives here via webhook, update the transaction and notify the user.
+async function _processElectricityWebhook(txDoc, queryResult, payload) {
+  const ref = txDoc.reference;
+  try {
+    const d = queryResult.description || payload?.description || {};
+
+    if (queryResult.ok && (d.Status === 'Completed' || d.Status === 'completed')) {
+      const token = d.Token || d.token || payload?.Token || null;
+      const unit  = d.Unit  || d.unit  || payload?.Unit  || null;
+
+      // Update transaction — token may be arriving for the first time via webhook
+      txDoc.status = 'success';
+      if (token) {
+        txDoc.purchasedCode = token;
+        if (unit) txDoc.tokenUnits = unit;
+        console.log(`[vtuAfricaWebhook] Electricity token received via webhook for ref ${ref}: ${token}`);
+      } else {
+        console.warn(`[vtuAfricaWebhook] Electricity webhook for ref ${ref} — Status Completed but no token field`);
+      }
+
+      txDoc.transactionId = d.ReferenceID || txDoc.transactionId;
+      await txDoc.save();
+
+      // TODO: fire push notification to user: "Your electricity token is ready: {token}"
+      // Uncomment when push notification service is wired:
+      // await pushNotificationService.send(txDoc.userId, {
+      //   title: 'Electricity Token Ready',
+      //   body: token ? `Your token: ${token}` : 'Your electricity payment was successful.',
+      // });
+
+    } else {
+      txDoc.status       = 'failed';
+      txDoc.failureReason = d.message || 'Electricity payment not confirmed by VTU Africa.';
+      await txDoc.save();
+      console.warn(`[vtuAfricaWebhook] Electricity ref ${ref} marked failed — status: ${d.Status}`);
+    }
+  } catch (err) {
+    console.error(`[vtuAfricaWebhook] Error processing electricity ref ${ref}:`, err.message);
   }
 }
 

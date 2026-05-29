@@ -26,6 +26,7 @@ const pricingService         = require('../services/pricingService');
 const vtuAfricaService       = require('../services/vtuAfricaService');
 const vtuAfricaBillsService  = require('../services/vtuAfricaBillsService');
 const DataPlan               = require('../models/DataPlan');
+const CableTVPlan            = require('../models/CableTVPlan');
 const {
   deductWalletBalance: _deductWallet,
   refundWalletBalance: _refundWallet,
@@ -419,28 +420,51 @@ const verifyMeterNumber = async (req, res) => {
     }
 
     const serviceID = DISCO_MAP[disco.toLowerCase()] || disco;
-    const response  = await vtpassApi.post('/merchant-verify', { serviceID, billersCode: meterNumber });
 
-    if (response.data.code === '000' || response.data.content?.Customer_Name) {
-      return res.json({
-        success: true,
-        message: 'Meter verified successfully',
-        data: {
-          customerName:       response.data.content?.Customer_Name || 'Customer',
-          address:            response.data.content?.Address || null,
-          meterNumber:        response.data.content?.Meter_Number || meterNumber,
-          outstandingBalance: response.data.content?.Outstanding_Balance || 0,
-          customerDistrict:   response.data.content?.Customer_District || null,
-          accountType:        meterType,
-        },
-      });
+    if (_billsProvider() === 'vtpass') {
+      // ── VTpass path (unchanged) ────────────────────────────────────────────
+      const response  = await vtpassApi.post('/merchant-verify', { serviceID, billersCode: meterNumber });
+      if (response.data.code === '000' || response.data.content?.Customer_Name) {
+        return res.json({
+          success: true,
+          message: 'Meter verified successfully',
+          data: {
+            customerName:       response.data.content?.Customer_Name || 'Customer',
+            address:            response.data.content?.Address || null,
+            meterNumber:        response.data.content?.Meter_Number || meterNumber,
+            outstandingBalance: response.data.content?.Outstanding_Balance || 0,
+            customerDistrict:   response.data.content?.Customer_District || null,
+            accountType:        meterType,
+          },
+        });
+      }
+      return res.status(400).json({ success: false, message: response.data.response_description || 'Meter verification failed.' });
     }
-    return res.status(400).json({ success: false, message: response.data.response_description || 'Meter verification failed.' });
+
+    // ── VTU Africa path ──────────────────────────────────────────────────────
+    const vtuResult = await vtuAfricaBillsService.verifyMeter({
+      service:   serviceID,
+      meterNo:   meterNumber,
+      metertype: meterType,
+    });
+    return res.json({
+      success: true,
+      message: 'Meter verified successfully',
+      data: {
+        customerName:  vtuResult.customerName,
+        address:       vtuResult.address,
+        meterNumber:   vtuResult.meterNumber,
+        meterType:     vtuResult.meterType,
+        customerNo:    vtuResult.customerNo,
+        accountType:   meterType,
+      },
+    });
+
   } catch (error) {
     console.error('[paymentController] verifyMeterNumber error:', error.message);
-    res.status(error.response ? 400 : 500).json({
+    res.status(400).json({
       success: false,
-      message: error.response?.data?.response_description || 'Could not verify meter. Please try again.',
+      message: error.message || 'Could not verify meter. Please try again.',
     });
   }
 };
@@ -492,27 +516,50 @@ const payElectricityBill = async (req, res) => {
       session.endSession();
     }
 
-    let result;
+    // Phase 2: Call provider
     try {
-      result = await _callVtpass({ request_id, serviceID, billersCode: meterNumber, variation_code: meterType, amount: String(amount), phone: phoneNum });
-    } catch (vtpassErr) {
-      txDoc.status = 'failed'; txDoc.failureReason = vtpassErr.message; await txDoc.save();
+      if (_billsProvider() === 'vtpass') {
+        // ── VTpass path (unchanged) ──────────────────────────────────────────
+        const result = await _callVtpass({ request_id, serviceID, billersCode: meterNumber, variation_code: meterType, amount: String(amount), phone: phoneNum });
+        if (!result.success) {
+          txDoc.status = 'failed'; txDoc.failureReason = result.message; txDoc.response = result.rawResponse; await txDoc.save();
+          try { await _refundWallet(user, pricing.userPays); } catch (e) {
+            console.error('[paymentController] CRITICAL: electricity refund failed:', { reference, error: e.message });
+          }
+          return res.status(400).json({ success: false, message: result.message || 'Payment failed. Your wallet has been refunded.' });
+        }
+        if (result.purchasedCode) txDoc.purchasedCode = result.purchasedCode;
+        txDoc.status = 'success'; txDoc.transactionId = result.transactionId; txDoc.response = result.rawResponse;
+        await txDoc.save();
+      } else {
+        // ── VTU Africa path ──────────────────────────────────────────────────
+        const vtuRef    = `payflex-elec-${crypto.randomUUID()}`;
+        const vtuResult = await vtuAfricaBillsService.purchaseElectricity({
+          service:   serviceID,
+          meterNo:   meterNumber,
+          metertype: meterType,
+          amount:    Number(amount),
+          ref:       vtuRef,
+        });
+        txDoc.status        = 'success';
+        txDoc.transactionId = vtuResult.referenceId;
+        txDoc.response      = vtuResult.raw;
+        // Store token immediately if delivered in API response
+        if (vtuResult.token) {
+          txDoc.purchasedCode = vtuResult.token;
+          txDoc.tokenUnits    = vtuResult.unit;
+        }
+        await txDoc.save();
+      }
+    } catch (providerErr) {
+      console.error('[paymentController] electricity provider error after debit:', providerErr.message);
+      txDoc.status = 'failed'; txDoc.failureReason = providerErr.message; await txDoc.save();
       try { await _refundWallet(user, pricing.userPays); } catch (e) {
         console.error('[paymentController] CRITICAL: electricity refund failed:', { reference, error: e.message });
       }
-      return res.status(502).json({ success: false, message: 'Service provider is unavailable. Your wallet has been refunded.' });
+      return res.status(502).json({ success: false, message: providerErr.message || 'Payment failed. Your wallet has been refunded.' });
     }
 
-    if (!result.success) {
-      txDoc.status = 'failed'; txDoc.failureReason = result.message; txDoc.response = result.rawResponse; await txDoc.save();
-      try { await _refundWallet(user, pricing.userPays); } catch (e) {
-        console.error('[paymentController] CRITICAL: electricity refund failed:', { reference, error: e.message });
-      }
-      return res.status(400).json({ success: false, message: result.message || 'Payment failed. Your wallet has been refunded.' });
-    }
-
-    txDoc.status = 'success'; txDoc.transactionId = result.transactionId; txDoc.response = result.rawResponse;
-    await txDoc.save();
     return res.json({ success: true, message: 'Electricity payment successful.', reference, data: txDoc });
 
   } catch (error) {
@@ -532,17 +579,38 @@ const getTVBouquets = async (req, res) => {
     const serviceID = TV_PROVIDER_MAP[provider.toLowerCase()];
     if (!serviceID) return res.status(400).json({ success: false, message: `Invalid TV provider: ${provider}` });
 
-    const response  = await vtpassApiGet.get(`/service-variations?serviceID=${serviceID}`, { timeout: 15000 });
-    let variations  = response.data?.content?.varations || response.data?.content?.variations || [];
-    variations      = variations.filter(v => parseFloat(v.variation_amount || 0) >= 1000);
+    if (_billsProvider() === 'vtpass') {
+      // ── VTpass path (unchanged) ──────────────────────────────────────────
+      const response  = await vtpassApiGet.get(`/service-variations?serviceID=${serviceID}`, { timeout: 15000 });
+      let variations  = response.data?.content?.varations || response.data?.content?.variations || [];
+      variations      = variations.filter(v => parseFloat(v.variation_amount || 0) >= 1000);
+      const bouquets  = variations.map(v => {
+        const vtpassCost = parseFloat(v.variation_amount || 0);
+        const pricing    = pricingService.getCablePrice({ vtpassCost });
+        return { ...v, variation_amount: vtpassCost, userPays: pricing.userPays, convenienceFee: pricing.ourMargin };
+      });
+      return res.json({ success: true, message: 'TV bouquets fetched successfully', data: { provider, bouquets } });
+    }
 
-    const bouquets = variations.map(v => {
-      const vtpassCost = parseFloat(v.variation_amount || 0);
-      const pricing    = pricingService.getCablePrice({ vtpassCost });
-      return { ...v, variation_amount: vtpassCost, userPays: pricing.userPays, convenienceFee: pricing.ourMargin };
+    // ── VTU Africa path — fetch from DB ──────────────────────────────────────
+    const dbPlans = await CableTVPlan.find({ provider: provider.toLowerCase(), status: 'Active', vtuProvider: 'vtuafrica' })
+      .sort({ costPrice: 1 })
+      .lean();
+
+    const bouquets = dbPlans.map(plan => {
+      const pricing = pricingService.getCablePrice({ vtpassCost: plan.costPrice });
+      return {
+        variation_code:   plan.variationCode,
+        variation_amount: plan.costPrice,
+        name:             plan.planName,
+        billingPeriod:    plan.billingPeriod,
+        userPays:         pricing.userPays,
+        convenienceFee:   pricing.ourMargin,
+      };
     });
 
-    res.json({ success: true, message: 'TV bouquets fetched successfully', data: { provider, bouquets } });
+    return res.json({ success: true, message: 'TV bouquets fetched successfully', data: { provider, bouquets } });
+
   } catch (error) {
     console.error('[paymentController] getTVBouquets error:', error.message);
     res.status(500).json({ success: false, message: 'Failed to fetch TV bouquets.' });
@@ -551,39 +619,61 @@ const getTVBouquets = async (req, res) => {
 
 const verifySmartcard = async (req, res) => {
   try {
-    const { smartcardNumber, provider } = req.body;
+    const { smartcardNumber, provider, variation_code } = req.body;
     if (!smartcardNumber || !provider) return res.status(400).json({ success: false, message: 'Smartcard number and provider are required.' });
     if (!/^\d{10,11}$/.test(smartcardNumber)) return res.status(400).json({ success: false, message: 'Invalid smartcard number format.' });
 
     const serviceID = TV_PROVIDER_MAP[provider.toLowerCase()];
     if (!serviceID) return res.status(400).json({ success: false, message: `Invalid TV provider: ${provider}` });
 
-    const response = await vtpassApi.post('/merchant-verify', { serviceID, billersCode: smartcardNumber });
+    if (_billsProvider() === 'vtpass') {
+      // ── VTpass path (unchanged) ────────────────────────────────────────────
+      const response = await vtpassApi.post('/merchant-verify', { serviceID, billersCode: smartcardNumber });
+      const hasError    = response.data.content?.error || response.data.content?.Error;
+      const hasCustomer = response.data.content?.Customer_Name || response.data.content?.customerName;
+      if (hasError)     return res.status(400).json({ success: false, message: hasError || 'Invalid smartcard number.' });
+      if (!hasCustomer) return res.status(400).json({ success: false, message: 'Invalid smartcard number or no customer data found.' });
+      return res.json({
+        success: true,
+        message: 'Smartcard verified successfully',
+        data: {
+          customerName:       response.data.content?.Customer_Name || 'Customer',
+          smartcardNumber:    response.data.content?.Customer_Number || smartcardNumber,
+          currentBouquet:     response.data.content?.Current_Bouquet || null,
+          currentBouquetCode: response.data.content?.Current_Bouquet_Code || null,
+          renewalAmount:      response.data.content?.Renewal_Amount || null,
+          dueDate:            response.data.content?.Due_Date || null,
+          status:             response.data.content?.Status || 'Active',
+        },
+      });
+    }
 
-    const hasError    = response.data.content?.error || response.data.content?.Error;
-    const hasCustomer = response.data.content?.Customer_Name || response.data.content?.customerName;
-
-    if (hasError)    return res.status(400).json({ success: false, message: hasError || 'Invalid smartcard number.' });
-    if (!hasCustomer) return res.status(400).json({ success: false, message: 'Invalid smartcard number or no customer data found.' });
-
+    // ── VTU Africa path ──────────────────────────────────────────────────────
+    // variation_code is needed for VTU Africa verify — use a default if not sent
+    const variation = variation_code || `${provider.toLowerCase()}_basic`;
+    const vtuResult = await vtuAfricaBillsService.verifySmartcard({
+      service:   provider.toLowerCase(),
+      smartNo:   smartcardNumber,
+      variation,
+    });
     return res.json({
       success: true,
       message: 'Smartcard verified successfully',
       data: {
-        customerName:       response.data.content?.Customer_Name || 'Customer',
-        smartcardNumber:    response.data.content?.Customer_Number || smartcardNumber,
-        currentBouquet:     response.data.content?.Current_Bouquet || null,
-        currentBouquetCode: response.data.content?.Current_Bouquet_Code || null,
-        renewalAmount:      response.data.content?.Renewal_Amount || null,
-        dueDate:            response.data.content?.Due_Date || null,
-        status:             response.data.content?.Status || 'Active',
+        customerName:    vtuResult.customerName,
+        smartcardNumber: vtuResult.smartNo || smartcardNumber,
+        currentBouquet:  vtuResult.currentBouquet,
+        dueDate:         vtuResult.dueDate,
+        status:          vtuResult.currentStatus,
+        customerNumber:  vtuResult.customerNumber,
       },
     });
+
   } catch (error) {
     console.error('[paymentController] verifySmartcard error:', error.message);
-    res.status(error.response ? 400 : 500).json({
+    res.status(400).json({
       success: false,
-      message: error.response?.data?.response_description || 'Could not verify smartcard. Please try again.',
+      message: error.message || 'Could not verify smartcard. Please try again.',
     });
   }
 };
@@ -641,33 +731,55 @@ const _subscribeTVHelper = async (req, res, subscriptionType) => {
       session.endSession();
     }
 
-    let result;
+    // Phase 2: Call provider
     try {
-      const payload = {
-        request_id, serviceID, billersCode: smartcardNumber,
-        amount: String(amount), phone: phoneNum, subscription_type: subscriptionType,
-      };
-      if (variation_code) payload.variation_code = variation_code;
-      result = await _callVtpass(payload);
-    } catch (vtpassErr) {
-      txDoc.status = 'failed'; txDoc.failureReason = vtpassErr.message; await txDoc.save();
+      if (_billsProvider() === 'vtpass') {
+        // ── VTpass path (unchanged) ────────────────────────────────────────
+        const payload = {
+          request_id, serviceID, billersCode: smartcardNumber,
+          amount: String(amount), phone: phoneNum, subscription_type: subscriptionType,
+        };
+        if (variation_code) payload.variation_code = variation_code;
+        const result = await _callVtpass(payload);
+        if (!result.success) {
+          txDoc.status = 'failed'; txDoc.failureReason = result.message; txDoc.response = result.rawResponse; await txDoc.save();
+          try { await _refundWallet(user, pricing.userPays); } catch (e) {
+            console.error('[paymentController] CRITICAL: TV refund failed:', { reference, error: e.message });
+          }
+          return res.status(400).json({ success: false, message: result.message || 'TV subscription failed. Your wallet has been refunded.' });
+        }
+        if (result.purchasedCode) txDoc.purchasedCode = result.purchasedCode;
+        txDoc.status = 'success'; txDoc.transactionId = result.transactionId; txDoc.response = result.rawResponse;
+        await txDoc.save();
+      } else {
+        // ── VTU Africa path ──────────────────────────────────────────────────
+        if (!variation_code) {
+          txDoc.status = 'failed'; txDoc.failureReason = 'variation_code required'; await txDoc.save();
+          await _refundWallet(user, pricing.userPays);
+          return res.status(400).json({ success: false, message: 'Please select a bouquet plan. Your wallet has been refunded.' });
+        }
+        const vtuRef    = `payflex-tv-${crypto.randomUUID()}`;
+        const vtuResult = await vtuAfricaBillsService.purchaseTVSubscription({
+          service:   provider.toLowerCase(),
+          smartNo:   smartcardNumber,
+          variation: variation_code,
+          costPrice: Number(amount),
+          ref:       vtuRef,
+        });
+        txDoc.status        = 'success';
+        txDoc.transactionId = vtuResult.referenceId;
+        txDoc.response      = vtuResult.raw;
+        await txDoc.save();
+      }
+    } catch (providerErr) {
+      console.error('[paymentController] TV provider error after debit:', providerErr.message);
+      txDoc.status = 'failed'; txDoc.failureReason = providerErr.message; await txDoc.save();
       try { await _refundWallet(user, pricing.userPays); } catch (e) {
         console.error('[paymentController] CRITICAL: TV refund failed:', { reference, error: e.message });
       }
-      return res.status(502).json({ success: false, message: 'Service provider is unavailable. Your wallet has been refunded.' });
+      return res.status(502).json({ success: false, message: providerErr.message || 'TV subscription failed. Your wallet has been refunded.' });
     }
 
-    if (!result.success) {
-      txDoc.status = 'failed'; txDoc.failureReason = result.message; txDoc.response = result.rawResponse; await txDoc.save();
-      try { await _refundWallet(user, pricing.userPays); } catch (e) {
-        console.error('[paymentController] CRITICAL: TV refund failed:', { reference, error: e.message });
-      }
-      return res.status(400).json({ success: false, message: result.message || 'TV subscription failed. Your wallet has been refunded.' });
-    }
-
-    if (result.purchasedCode) txDoc.purchasedCode = result.purchasedCode;
-    txDoc.status = 'success'; txDoc.transactionId = result.transactionId; txDoc.response = result.rawResponse;
-    await txDoc.save();
     return res.json({ success: true, message: 'TV subscription successful.', reference, data: txDoc });
 
   } catch (error) {
