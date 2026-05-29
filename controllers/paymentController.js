@@ -649,8 +649,19 @@ const verifySmartcard = async (req, res) => {
     }
 
     // ── VTU Africa path ──────────────────────────────────────────────────────
-    // variation_code is needed for VTU Africa verify — use a default if not sent
-    const variation = variation_code || `${provider.toLowerCase()}_basic`;
+    // variation_code is needed by the VTU Africa verify endpoint.
+    // If not provided (user hasn't picked a plan yet), look up the cheapest
+    // active plan for this provider from the DB so we always send a valid code.
+    let variation = variation_code;
+    if (!variation) {
+      const cheapest = await CableTVPlan.findOne({ provider: provider.toLowerCase(), status: 'Active' })
+        .sort({ costPrice: 1 })
+        .lean();
+      variation = cheapest?.variationCode;
+    }
+    if (!variation) {
+      return res.status(400).json({ success: false, message: `No active plans found for ${provider}. Please try again later.` });
+    }
     const vtuResult = await vtuAfricaBillsService.verifySmartcard({
       service:   provider.toLowerCase(),
       smartNo:   smartcardNumber,
