@@ -50,10 +50,6 @@ router.post(
       .isLength({ min: 11, max: 11 })
       .matches(/^\d{11}$/)
       .withMessage('NIN must be exactly 11 digits'),
-    body('pin')
-      .isLength({ min: 4, max: 4 })
-      .matches(/^\d{4}$/)
-      .withMessage('PIN must be exactly 4 digits'),
   ],
   validate,
   verifyNIN

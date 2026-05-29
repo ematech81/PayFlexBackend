@@ -23,24 +23,24 @@ const verificationApi = axios.create({
  */
 const validatePinAndBalance = async (userId, pin, serviceCharge) => {
   const user = await User.findById(userId).select('+transactionPinHash');
-  
-  if (!user) {
-    throw new Error('User not found');
-  }
 
-  if (!user.transactionPinHash) {
-    throw new Error('Transaction PIN not set');
-  }
+  if (!user) throw new Error('User not found');
+  if (!user.transactionPinHash) throw new Error('Transaction PIN not set');
 
   const isPinValid = await bcrypt.compare(String(pin), user.transactionPinHash);
-  if (!isPinValid) {
-    throw new Error('Invalid transaction PIN');
-  }
+  if (!isPinValid) throw new Error('Invalid transaction PIN');
+  if (user.walletBalance < serviceCharge) throw new Error('Insufficient wallet balance');
 
-  if (user.walletBalance < serviceCharge) {
-    throw new Error('Insufficient wallet balance');
-  }
+  return user;
+};
 
+/**
+ * Check wallet balance only (no PIN required)
+ */
+const validateBalance = async (userId, serviceCharge) => {
+  const user = await User.findById(userId);
+  if (!user) throw new Error('User not found');
+  if (user.walletBalance < serviceCharge) throw new Error('Insufficient wallet balance');
   return user;
 };
 
@@ -185,14 +185,13 @@ const formatBVNResponse = (transaction, apiResponse) => {
  */
 const verifyNIN = async (req, res) => {
   try {
-    const { nin, pin } = req.body;
+    const { nin } = req.body;
     const userId = req.user.id || req.user._id;
 
     console.log('=== NIN VERIFICATION ===');
     console.log('User ID:', userId);
     console.log('NIN:', nin);
 
-    // Validate inputs
     if (!nin || !/^\d{11}$/.test(nin)) {
       return res.status(400).json({
         success: false,
@@ -200,17 +199,10 @@ const verifyNIN = async (req, res) => {
       });
     }
 
-    if (!pin || !/^\d{4}$/.test(pin)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Transaction PIN is required',
-      });
-    }
-
     const serviceCharge = 150;
 
-    // Validate PIN and balance
-    const user = await validatePinAndBalance(userId, pin, serviceCharge);
+    // Check balance only — no PIN required
+    const user = await validateBalance(userId, serviceCharge);
 
     // Create transaction
     const transaction = await createTransaction(
