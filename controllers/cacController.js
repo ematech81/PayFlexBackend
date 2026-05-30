@@ -584,6 +584,66 @@ const handleWebhook = async (req, res) => {
   }
 };
 
+// ─── POST /api/cac/compliance ─────────────────────────────────────────────────
+// Free BN compliance pre-check (no wallet deduction).
+// Returns statusCode, message, recommendedActions, suggestedNames, similarNames.
+const checkCompliance = async (req, res) => {
+  if (!featureEnabled()) {
+    return res.status(503).json({ success: false, message: 'CAC services are temporarily unavailable.' });
+  }
+
+  const { proposedName, lineOfBusiness } = req.body;
+  if (!proposedName || !String(proposedName).trim()) {
+    return res.status(400).json({ success: false, message: 'proposedName is required.' });
+  }
+
+  try {
+    const vasResult = await cacVasService.bnCompliance({
+      proposedName:   String(proposedName).trim(),
+      lineOfBusiness: lineOfBusiness ? String(lineOfBusiness).trim() : '',
+    });
+    return res.json({ success: true, data: vasResult });
+  } catch (err) {
+    console.error('[cac] checkCompliance error:', err.message);
+    return res.status(err.statusCode || 502).json({ success: false, message: err.message });
+  }
+};
+
+// ─── POST /api/cac/validate ──────────────────────────────────────────────────
+// Validate full registration payload (without images) before wallet deduction.
+// Caller passes complete formData; backend strips base64 image fields here.
+const IMAGE_FIELDS = ['passport', 'meansOfId', 'signature', 'supportingDoc'];
+
+const validatePayload = async (req, res) => {
+  if (!featureEnabled()) {
+    return res.status(503).json({ success: false, message: 'CAC services are temporarily unavailable.' });
+  }
+
+  const payload = { ...req.body };
+
+  // Validate presence of required image fields before stripping
+  const requiredImages = ['passport', 'meansOfId', 'signature'];
+  const missing = requiredImages.filter(f => !payload[f]);
+  if (missing.length > 0) {
+    return res.status(400).json({
+      success: false,
+      message: `Missing required documents: ${missing.join(', ')}`,
+      missingFields: missing,
+    });
+  }
+
+  // Strip base64 images — never forward to VAS logs
+  IMAGE_FIELDS.forEach(f => delete payload[f]);
+
+  try {
+    const vasResult = await cacVasService.validateBnPayload(payload);
+    return res.json({ success: true, data: vasResult });
+  } catch (err) {
+    console.error('[cac] validatePayload error:', err.message);
+    return res.status(err.statusCode || 502).json({ success: false, message: err.message });
+  }
+};
+
 // ─── Exports ──────────────────────────────────────────────────────────────────
 module.exports = {
   getPrices,
@@ -596,4 +656,6 @@ module.exports = {
   getHistory,
   registerLLC,
   handleWebhook,
+  checkCompliance,
+  validatePayload,
 };

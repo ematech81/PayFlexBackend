@@ -236,6 +236,26 @@ async function generateTIN({ rcNumber }) {
   return _post('/api/vas/validation/secure/generate-tin', { rcNumber });
 }
 
+/**
+ * BN Compliance pre-check (advanceCheck=true).
+ * Free — no wallet deduction.
+ * Returns statusCode, message, recommendedActions, suggestedNames, similarNames.
+ */
+async function bnCompliance({ proposedName, lineOfBusiness }) {
+  return _post('/api/vas/engine/pre/bn-compliance?advanceCheck=true', {
+    proposedName,
+    lineOfBusiness: lineOfBusiness || '',
+  });
+}
+
+/**
+ * Validate full BN registration payload before wallet deduction.
+ * Caller must strip base64 image fields before passing payload here.
+ */
+async function validateBnPayload(payload) {
+  return _post('/api/vas/engine/pre/bn/validation', payload);
+}
+
 // ─── Exports ─────────────────────────────────────────────────────────────────
 
 module.exports = {
@@ -248,4 +268,6 @@ module.exports = {
   getCompanyByTIN,
   getVRCReport,
   generateTIN,
+  bnCompliance,
+  validateBnPayload,
 };

@@ -15,14 +15,18 @@ const {
   getHistory,
   registerLLC,
   handleWebhook,
+  checkCompliance,
+  validatePayload,
 } = require('../controllers/cacController');
 
 // ── Webhook (no auth — raw body set in server.js before express.json()) ───────
 router.post('/webhook', handleWebhook);
 
 // ── Public (auth only) ────────────────────────────────────────────────────────
-router.get('/prices',        protect, getPrices);
+router.get('/prices',         protect, getPrices);
 router.post('/validate-name', protect, validateName);
+router.post('/compliance',    protect, checkCompliance);
+router.post('/validate',      protect, validatePayload);
 router.get('/history',        protect, getHistory);
 
 // ── Registration ──────────────────────────────────────────────────────────────
