@@ -643,6 +643,17 @@ const validatePayload = async (req, res) => {
     return res.json({ success: true, data: vasResult });
   } catch (err) {
     console.error('[cac] validatePayload error:', err.message);
+
+    // 403 from VAS = pre-validation endpoint not enabled for this API key.
+    // Degrade gracefully — pre-check is optional, not a blocker.
+    if (err.statusCode === 403 || err.response?.status === 403) {
+      return res.json({
+        success:     true,
+        unavailable: true,
+        message:     'Pre-validation is not available for your VAS account. You can still proceed — your registration will be validated by CAC during processing.',
+      });
+    }
+
     return res.status(err.statusCode || 502).json({ success: false, message: err.message });
   }
 };
