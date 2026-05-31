@@ -622,9 +622,11 @@ const checkCompliance = async (req, res) => {
 };
 
 // ─── POST /api/cac/validate ──────────────────────────────────────────────────
-// Validate full registration payload (without images) before wallet deduction.
-// Caller passes complete formData; backend strips base64 image fields here.
-const IMAGE_FIELDS = ['passport', 'meansOfId', 'signature', 'supportingDoc'];
+// Validate text fields in the registration payload before wallet deduction.
+// Document presence is enforced client-side; this endpoint only validates
+// text fields via the free VAS pre-check API.
+const IMAGE_FIELDS = ['passport', 'meansOfId', 'signature', 'supportingDoc',
+                      'proprietorProofOfAddress', 'businessProofOfAddress'];
 
 const validatePayload = async (req, res) => {
   if (!featureEnabled()) {
@@ -632,17 +634,6 @@ const validatePayload = async (req, res) => {
   }
 
   const payload = { ...req.body };
-
-  // Validate presence of required image fields before stripping
-  const requiredImages = ['passport', 'meansOfId', 'signature'];
-  const missing = requiredImages.filter(f => !payload[f]);
-  if (missing.length > 0) {
-    return res.status(400).json({
-      success: false,
-      message: `Missing required documents: ${missing.join(', ')}`,
-      missingFields: missing,
-    });
-  }
 
   // Strip base64 images — never forward to VAS logs
   IMAGE_FIELDS.forEach(f => delete payload[f]);
