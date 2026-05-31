@@ -3,7 +3,7 @@
 /**
  * CAC VAS Service Layer
  *
- * All calls go to https://vasapp.oasisproducts.ng via Axios.
+ * All calls go to https://vasapp.cac.gov.ng via Axios.
  * Authentication: X_API_KEY header (never logged in plaintext).
  * Auto-retries on 5xx / network errors — 3 attempts, exponential backoff (1s, 2s).
  *
@@ -15,7 +15,7 @@
 
 const axios = require('axios');
 
-const BASE_URL   = process.env.CAC_VAS_BASE_URL || 'https://vasapp.oasisproducts.ng';
+const BASE_URL   = process.env.CAC_VAS_BASE_URL || 'https://vasapp.cac.gov.ng';
 const TIMEOUT_MS = 30_000;
 const MAX_RETRIES = 3;
 
