@@ -131,11 +131,13 @@ async function buyTicket({ req, res, type, merpiPath, extraValidate }) {
   }
 }
 
-// ─── BUS TICKETING ────────────────────────────────────────────────────────────
+// ─── BUS / TRANSPORT ─────────────────────────────────────────────────────────
+// Confirmed base: https://merpi.syticks.com/api
+// All transport paths: /v1/merpi/transport/...
 
 const getStates = async (req, res) => {
   try {
-    const { data } = await merpi.get('/states');
+    const { data } = await merpi.get('/v1/merpi/transport/states', { params: req.query });
     res.json({ success: true, data });
   } catch (err) {
     console.error('[merpi] getStates:', merpiErrMsg(err));
@@ -145,7 +147,7 @@ const getStates = async (req, res) => {
 
 const getCities = async (req, res) => {
   try {
-    const { data } = await merpi.get('/cities', { params: req.query });
+    const { data } = await merpi.get('/v1/merpi/transport/cities', { params: req.query });
     res.json({ success: true, data });
   } catch (err) {
     console.error('[merpi] getCities:', merpiErrMsg(err));
@@ -156,7 +158,7 @@ const getCities = async (req, res) => {
 const getRoutes = async (req, res) => {
   try {
     const { from, to, departure_date } = req.query;
-    const { data } = await merpi.get('/routes', { params: { from, to, departure_date } });
+    const { data } = await merpi.get('/v1/merpi/transport/routes', { params: { from, to, departure_date } });
     res.json({ success: true, data });
   } catch (err) {
     console.error('[merpi] getRoutes:', merpiErrMsg(err));
@@ -167,7 +169,7 @@ const getRoutes = async (req, res) => {
 const getBuses = async (req, res) => {
   try {
     const { route_id, schedule_id } = req.query;
-    const { data } = await merpi.get('/buses', { params: { route_id, schedule_id } });
+    const { data } = await merpi.get('/v1/merpi/transport/buses', { params: { route_id, schedule_id } });
     res.json({ success: true, data });
   } catch (err) {
     console.error('[merpi] getBuses:', merpiErrMsg(err));
@@ -177,7 +179,7 @@ const getBuses = async (req, res) => {
 
 const getSingleBus = async (req, res) => {
   try {
-    const { data } = await merpi.get(`/buses/${req.params.bus_id}`);
+    const { data } = await merpi.get(`/v1/merpi/transport/buses/${req.params.bus_id}`);
     res.json({ success: true, data });
   } catch (err) {
     console.error('[merpi] getSingleBus:', merpiErrMsg(err));
@@ -188,7 +190,7 @@ const getSingleBus = async (req, res) => {
 const getSchedules = async (req, res) => {
   try {
     const { route_id, departure_date } = req.query;
-    const { data } = await merpi.get('/schedules', { params: { route_id, departure_date } });
+    const { data } = await merpi.get('/v1/merpi/transport/schedules', { params: { route_id, departure_date } });
     res.json({ success: true, data });
   } catch (err) {
     console.error('[merpi] getSchedules:', merpiErrMsg(err));
@@ -199,7 +201,7 @@ const getSchedules = async (req, res) => {
 const getSeats = async (req, res) => {
   try {
     const { bus_id, schedule_id } = req.query;
-    const { data } = await merpi.get('/seats', { params: { bus_id, schedule_id } });
+    const { data } = await merpi.get('/v1/merpi/transport/seats', { params: { bus_id, schedule_id } });
     res.json({ success: true, data });
   } catch (err) {
     console.error('[merpi] getSeats:', merpiErrMsg(err));
@@ -208,13 +210,14 @@ const getSeats = async (req, res) => {
 };
 
 const buyBusTicket = (req, res) =>
-  buyTicket({ req, res, type: 'bus_ticket', merpiPath: '/tickets/buy' });
+  buyTicket({ req, res, type: 'bus_ticket', merpiPath: '/v1/merpi/transport/tickets/buy' });
 
-// ─── EVENTS ───────────────────────────────────────────────────────────────────
+// ─── EVENTS / EXPERIENCES ────────────────────────────────────────────────────
+// Inferred path: /v1/merpi/experiences/... — update if docs show different
 
 const getExperiences = async (req, res) => {
   try {
-    const { data } = await merpi.get('/experiences', { params: req.query });
+    const { data } = await merpi.get('/v1/merpi/experiences', { params: req.query });
     res.json({ success: true, data });
   } catch (err) {
     console.error('[merpi] getExperiences:', merpiErrMsg(err));
@@ -224,7 +227,7 @@ const getExperiences = async (req, res) => {
 
 const getExperienceDetails = async (req, res) => {
   try {
-    const { data } = await merpi.get(`/experiences/${req.params.id}`);
+    const { data } = await merpi.get(`/v1/merpi/experiences/${req.params.id}`);
     res.json({ success: true, data });
   } catch (err) {
     console.error('[merpi] getExperienceDetails:', merpiErrMsg(err));
@@ -234,7 +237,7 @@ const getExperienceDetails = async (req, res) => {
 
 const getExperienceTickets = async (req, res) => {
   try {
-    const { data } = await merpi.get(`/experiences/${req.params.id}/tickets`);
+    const { data } = await merpi.get(`/v1/merpi/experiences/${req.params.id}/tickets`);
     res.json({ success: true, data });
   } catch (err) {
     console.error('[merpi] getExperienceTickets:', merpiErrMsg(err));
@@ -243,13 +246,14 @@ const getExperienceTickets = async (req, res) => {
 };
 
 const buyExperienceTickets = (req, res) =>
-  buyTicket({ req, res, type: 'event_ticket', merpiPath: '/tickets/buy' });
+  buyTicket({ req, res, type: 'event_ticket', merpiPath: '/v1/merpi/experiences/tickets/buy' });
 
 // ─── CINEMA ───────────────────────────────────────────────────────────────────
+// Inferred path: /v1/merpi/cinema/... — update if docs show different
 
 const getMovies = async (req, res) => {
   try {
-    const { data } = await merpi.get('/cinema', { params: req.query });
+    const { data } = await merpi.get('/v1/merpi/cinema', { params: req.query });
     res.json({ success: true, data });
   } catch (err) {
     console.error('[merpi] getMovies:', merpiErrMsg(err));
@@ -259,7 +263,7 @@ const getMovies = async (req, res) => {
 
 const getCinemaDetails = async (req, res) => {
   try {
-    const { data } = await merpi.get(`/cinema/${req.params.id}`);
+    const { data } = await merpi.get(`/v1/merpi/cinema/${req.params.id}`);
     res.json({ success: true, data });
   } catch (err) {
     console.error('[merpi] getCinemaDetails:', merpiErrMsg(err));
@@ -269,7 +273,7 @@ const getCinemaDetails = async (req, res) => {
 
 const getAvailableDates = async (req, res) => {
   try {
-    const { data } = await merpi.get(`/cinema/${req.params.id}/dates`);
+    const { data } = await merpi.get(`/v1/merpi/cinema/${req.params.id}/dates`);
     res.json({ success: true, data });
   } catch (err) {
     console.error('[merpi] getAvailableDates:', merpiErrMsg(err));
@@ -279,7 +283,7 @@ const getAvailableDates = async (req, res) => {
 
 const getCinemaTicketTypes = async (req, res) => {
   try {
-    const { data } = await merpi.get(`/cinema/${req.params.id}/tickets`);
+    const { data } = await merpi.get(`/v1/merpi/cinema/${req.params.id}/tickets`);
     res.json({ success: true, data });
   } catch (err) {
     console.error('[merpi] getCinemaTicketTypes:', merpiErrMsg(err));
@@ -292,7 +296,7 @@ const buyCinemaTickets = (req, res) =>
     req,
     res,
     type: 'cinema_ticket',
-    merpiPath: '/tickets/buy',
+    merpiPath: '/v1/merpi/cinema/tickets/buy',
     extraValidate: (body) => {
       if (!body.attendance_date) return 'attendance_date is required for cinema tickets.';
       return null;
@@ -303,7 +307,7 @@ const buyCinemaTickets = (req, res) =>
 
 const getCategories = async (req, res) => {
   try {
-    const { data } = await merpi.get('/categories');
+    const { data } = await merpi.get('/v1/merpi/categories');
     res.json({ success: true, data });
   } catch (err) {
     console.error('[merpi] getCategories:', merpiErrMsg(err));
@@ -313,7 +317,7 @@ const getCategories = async (req, res) => {
 
 const getBusinesses = async (req, res) => {
   try {
-    const { data } = await merpi.get('/businesses', { params: req.query });
+    const { data } = await merpi.get('/v1/merpi/businesses', { params: req.query });
     res.json({ success: true, data });
   } catch (err) {
     console.error('[merpi] getBusinesses:', merpiErrMsg(err));
@@ -331,7 +335,7 @@ const getTransaction = async (req, res) => {
 
     let merpiData = null;
     try {
-      const { data } = await merpi.get(`/transactions/${req.params.reference}`);
+      const { data } = await merpi.get(`/v1/merpi/transactions/${req.params.reference}`);
       merpiData = data;
       // Sync status from MERPI if local record exists
       if (local && merpiData?.status && local.status !== merpiData.status) {
