@@ -99,6 +99,9 @@ const startServer = async () => {
     // CAC VAS — business name registration & validation
     app.use('/api/cac', require('./routes/cacRoutes'));
 
+    // MERPI / Syticks — bus tickets, events, cinema
+    app.use('/api/merpi', require('./routes/merpiRoutes'));
+
     // Admin
     app.use('/api/admin/revenue', require('./routes/revenueRoutes'));
     app.use('/api/admin',         require('./routes/adminRoutes'));

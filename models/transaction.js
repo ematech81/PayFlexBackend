@@ -59,6 +59,10 @@ const transactionSchema = new mongoose.Schema({
       // CAC VAS services
       "cac_registration",
       "cac_validation",
+      // MERPI / Syticks
+      "bus_ticket",
+      "event_ticket",
+      "cinema_ticket",
     ],
     required: true,
     index: true,
