@@ -8,7 +8,7 @@ const merpi = axios.create({
   headers: {
     'Content-Type':    'application/json',
     'Accept':          'application/json',
-    'TransactionMedium': 'Web',
+    'TransactionMedium': 'Mobile',
   },
 });
 
