@@ -157,8 +157,10 @@ const getCities = async (req, res) => {
 
 const getRoutes = async (req, res) => {
   try {
-    const { from, to, departure_date } = req.query;
-    const { data } = await merpi.get('/v1/merpi/transport/routes', { params: { from, to, departure_date } });
+    const { from_city_id, to_city_id, price, business_id, search } = req.query;
+    const { data } = await merpi.get('/v2/merpi/transport/routes', {
+      params: { from_city_id, to_city_id, price, business_id, search },
+    });
     res.json({ success: true, data });
   } catch (err) {
     console.error('[merpi] getRoutes:', merpiErrMsg(err));
