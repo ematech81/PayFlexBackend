@@ -168,8 +168,8 @@ const getRoutes = async (req, res) => {
 
 const getBuses = async (req, res) => {
   try {
-    const { route_id, schedule_id } = req.query;
-    const { data } = await merpi.get('/v1/merpi/transport/buses', { params: { route_id, schedule_id } });
+    const { route_id, schedule_id, departure_date } = req.query;
+    const { data } = await merpi.get('/v1/merpi/transport/buses', { params: { route_id, schedule_id, departure_date } });
     res.json({ success: true, data });
   } catch (err) {
     console.error('[merpi] getBuses:', merpiErrMsg(err));
