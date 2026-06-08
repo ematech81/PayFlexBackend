@@ -168,23 +168,13 @@ const getRoutes = async (req, res) => {
   }
 };
 
+// Buses are the physical vehicles assigned to a schedule — fetched via path param
 const getBuses = async (req, res) => {
   try {
-    const { route_id, schedule_id, departure_date } = req.query;
-    const { data } = await merpi.get('/v1/merpi/transport/buses', { params: { route_id, schedule_id, departure_date } });
+    const { data } = await merpi.get(`/v1/merpi/transport/buses/${req.params.schedule_id}`);
     res.json({ success: true, data });
   } catch (err) {
     console.error('[merpi] getBuses:', merpiErrMsg(err));
-    res.status(err.response?.status || 502).json({ success: false, message: merpiErrMsg(err) });
-  }
-};
-
-const getSingleBus = async (req, res) => {
-  try {
-    const { data } = await merpi.get(`/v1/merpi/transport/buses/${req.params.bus_id}`);
-    res.json({ success: true, data });
-  } catch (err) {
-    console.error('[merpi] getSingleBus:', merpiErrMsg(err));
     res.status(err.response?.status || 502).json({ success: false, message: merpiErrMsg(err) });
   }
 };
@@ -365,7 +355,7 @@ const getTransaction = async (req, res) => {
 
 module.exports = {
   // Bus
-  getStates, getCities, getRoutes, getBuses, getSingleBus,
+  getStates, getCities, getRoutes, getBuses,
   getSchedules, getSeats, buyBusTicket,
   // Events
   getExperiences, getExperienceDetails, getExperienceTickets, buyExperienceTickets,

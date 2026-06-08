@@ -5,7 +5,7 @@ const router     = express.Router();
 const { protect } = require('../middleware/auth');
 const verifyPin  = require('../middleware/verifyPin');
 const {
-  getStates, getCities, getRoutes, getBuses, getSingleBus,
+  getStates, getCities, getRoutes, getBuses,
   getSchedules, getSeats, buyBusTicket,
   getExperiences, getExperienceDetails, getExperienceTickets, buyExperienceTickets,
   getMovies, getCinemaDetails, getAvailableDates, getCinemaTicketTypes, buyCinemaTickets,
@@ -16,8 +16,7 @@ const {
 router.get('/bus/states',         protect, getStates);
 router.get('/bus/cities',         protect, getCities);
 router.get('/bus/routes',         protect, getRoutes);
-router.get('/bus/buses',          protect, getBuses);
-router.get('/bus/buses/:bus_id',  protect, getSingleBus);
+router.get('/bus/buses/:schedule_id', protect, getBuses);
 router.get('/bus/schedules',      protect, getSchedules);
 router.get('/bus/seats',          protect, getSeats);
 router.post('/bus/buy',           protect, verifyPin, buyBusTicket);
