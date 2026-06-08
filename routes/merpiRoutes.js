@@ -18,7 +18,7 @@ router.get('/bus/cities',         protect, getCities);
 router.get('/bus/routes',         protect, getRoutes);
 router.get('/bus/buses/:schedule_id', protect, getBuses);
 router.get('/bus/schedules',      protect, getSchedules);
-router.get('/bus/seats',          protect, getSeats);
+router.get('/bus/seats/:schedule_id/:bus_id/:departure_date', protect, getSeats);
 router.post('/bus/buy',           protect, verifyPin, buyBusTicket);
 
 // ── Events ────────────────────────────────────────────────────────────────────
