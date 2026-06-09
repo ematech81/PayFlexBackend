@@ -204,7 +204,7 @@ const getSeats = async (req, res) => {
 };
 
 const buyBusTicket = (req, res) =>
-  buyTicket({ req, res, type: 'bus_ticket', merpiPath: '/v1/merpi/transport/tickets/buy' });
+  buyTicket({ req, res, type: 'bus_ticket', merpiPath: '/v2/merpi/transport/buy/tickets' });
 
 // ─── EVENTS / EXPERIENCES ────────────────────────────────────────────────────
 // Inferred path: /v1/merpi/experiences/... — update if docs show different
