@@ -138,7 +138,6 @@ async function buyTicket({ req, res, type, merpiPath, extraValidate }) {
 const getStates = async (req, res) => {
   try {
     const { data } = await merpi.get('/v1/merpi/transport/states', { params: req.query });
-    console.log('[merpi] getStates raw response:', JSON.stringify(data));
     res.json({ success: true, data });
   } catch (err) {
     console.error('[merpi] getStates:', merpiErrMsg(err));
@@ -149,7 +148,6 @@ const getStates = async (req, res) => {
 const getCities = async (req, res) => {
   try {
     const { data } = await merpi.get('/v1/merpi/transport/cities', { params: req.query });
-    console.log('[merpi] getCities raw response:', JSON.stringify(data));
     res.json({ success: true, data });
   } catch (err) {
     console.error('[merpi] getCities:', merpiErrMsg(err));
@@ -163,7 +161,6 @@ const getRoutes = async (req, res) => {
     const { data } = await merpi.get('/v2/merpi/transport/routes', {
       params: { from_city_id, to_city_id, price, business_id, search },
     });
-    console.log('[merpi] getRoutes raw response:', JSON.stringify(data));
     res.json({ success: true, data });
   } catch (err) {
     console.error('[merpi] getRoutes:', merpiErrMsg(err));
