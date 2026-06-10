@@ -80,6 +80,7 @@ async function buyTicket({ req, res, type, merpiPath, extraValidate }) {
   // Phase 2 — call MERPI API
   try {
     const { pin, amount: _amt, ...ticketData } = req.body;
+    console.log(`[merpi] ${type} request payload:`, JSON.stringify({ ...ticketData, reference }));
     const merpiRes = await merpi.post(merpiPath, { ...ticketData, reference });
     const data = merpiRes.data;
 
@@ -108,6 +109,7 @@ async function buyTicket({ req, res, type, merpiPath, extraValidate }) {
 
   } catch (err) {
     console.error(`[merpi] ${type} MERPI call failed:`, merpiErrMsg(err));
+    console.error(`[merpi] ${type} MERPI error response body:`, JSON.stringify(err.response?.data));
 
     await refundWalletBalance(user, amount).catch((re) =>
       console.error(`[merpi] ${type} refund failed:`, re.message)
