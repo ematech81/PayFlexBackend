@@ -34,6 +34,11 @@ const startServer = async () => {
     // 3️⃣ Initialize Express app
     const app = express();
 
+    // Railway (and most PaaS) sit behind a reverse proxy, so X-Forwarded-For
+    // is set on every request. Trust the first hop so express-rate-limit
+    // can correctly identify client IPs instead of the proxy's IP.
+    app.set('trust proxy', 1);
+
     // 4️⃣ Apply middlewares
     // The VTU Africa webhook route gets express.raw() BEFORE the global
     // express.json() parser. This preserves the raw Buffer so the webhook
