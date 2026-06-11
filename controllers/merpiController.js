@@ -192,6 +192,22 @@ const getSchedules = async (req, res) => {
   }
 };
 
+// V2 "packages" endpoint — for random schedules this is the only source of
+// schedule.operating_hours and schedule.buses[] (bus_id + start_time/end_time
+// per bus), which the v1 /schedules endpoint does not return.
+const getSchedulePackages = async (req, res) => {
+  try {
+    const { route_id, departure_date, from_city_id, to_city_id, business_id, terminal_id } = req.query;
+    const { data } = await merpi.get('/v2/merpi/transport/schedules/packages', {
+      params: { route_id, departure_date, from_city_id, to_city_id, business_id, terminal_id },
+    });
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error('[merpi] getSchedulePackages:', merpiErrMsg(err));
+    res.status(err.response?.status || 502).json({ success: false, message: merpiErrMsg(err) });
+  }
+};
+
 const getSeats = async (req, res) => {
   try {
     const { schedule_id, bus_id, departure_date } = req.params;
@@ -360,7 +376,7 @@ const getTransaction = async (req, res) => {
 module.exports = {
   // Bus
   getStates, getCities, getRoutes, getBuses,
-  getSchedules, getSeats, buyBusTicket,
+  getSchedules, getSchedulePackages, getSeats, buyBusTicket,
   // Events
   getExperiences, getExperienceDetails, getExperienceTickets, buyExperienceTickets,
   // Cinema
