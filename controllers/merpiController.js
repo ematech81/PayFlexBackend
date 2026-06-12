@@ -332,12 +332,6 @@ const getCinemaTicketTypes = async (req, res) => {
   }
 };
 
-// "YYYY-MM-DD" -> "DD-MM-YYYY" (MERPI buy endpoint expects DD-MM-YYYY)
-function toDDMMYYYY(dateStr) {
-  const [year, month, day] = dateStr.split('-');
-  return `${day}-${month}-${year}`;
-}
-
 const buyCinemaTickets = async (req, res) => {
   const userId = req.user.id || req.user._id;
   const {
@@ -449,7 +443,7 @@ const buyCinemaTickets = async (req, res) => {
       })),
       experience_id,
       ...(cinema_location_id ? { cinema_location_id } : {}),
-      attendance_date: toDDMMYYYY(attendance_date),
+      attendance_date,
       time_id,
       customer_info: customerInfo,
     };
