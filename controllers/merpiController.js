@@ -28,6 +28,10 @@ function isDeprecated(err, data) {
   );
 }
 
+function isNotFoundErr(err) {
+  return err.response?.status === 404;
+}
+
 async function buyTicket({ req, res, type, merpiPath, extraValidate }) {
   const userId = req.user.id || req.user._id;
 
@@ -480,6 +484,138 @@ const buyCinemaTickets = async (req, res) => {
   }
 };
 
+// ─── HOSPITALITY / HOTELS ──────────────────────────────────────────────────────
+// Hotels, apartments, resorts and inns. Single-call booking (no hold/validate phase).
+
+const getHotels = async (req, res) => {
+  try {
+    const { data } = await merpi.get('/v2/merpi/hotels', { params: req.query });
+    res.json({ success: true, data: data.data });
+  } catch (err) {
+    console.error('[merpi] getHotels:', merpiErrMsg(err));
+    res.status(err.response?.status || 502).json({ success: false, message: merpiErrMsg(err) });
+  }
+};
+
+const getHotelRooms = async (req, res) => {
+  try {
+    const { data } = await merpi.get(`/v2/merpi/hotels/${req.params.id}/rooms`, { params: req.query });
+    res.json({ success: true, data: data.data });
+  } catch (err) {
+    console.error('[merpi] getHotelRooms:', merpiErrMsg(err));
+    res.status(err.response?.status || 502).json({ success: false, message: merpiErrMsg(err) });
+  }
+};
+
+const bookHotelRoom = async (req, res) => {
+  const userId = req.user.id || req.user._id;
+  const { room_id, number_of_guests, number_of_rooms, checkin_date, checkout_date, amount } = req.body;
+
+  if (!room_id) {
+    return res.status(400).json({ success: false, message: 'room_id is required.' });
+  }
+  if (!number_of_guests || !number_of_rooms) {
+    return res.status(400).json({ success: false, message: 'number_of_guests and number_of_rooms are required.' });
+  }
+  if (!checkin_date || !checkout_date) {
+    return res.status(400).json({ success: false, message: 'checkin_date and checkout_date are required.' });
+  }
+
+  const numAmount = Number(amount);
+  if (!numAmount || numAmount <= 0) {
+    return res.status(400).json({ success: false, message: 'Valid amount is required.' });
+  }
+
+  let user;
+  try {
+    user = await User.findById(userId).select('+walletBalance');
+    if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
+    validateWalletBalance(user, numAmount);
+  } catch (err) {
+    return res.status(400).json({ success: false, message: err.message });
+  }
+
+  const customerInfo = {
+    name:         user.fullName,
+    email:        user.email,
+    phone_number: user.phone,
+  };
+
+  const reference = genRef('HOTELBOOKING');
+  let txn = null;
+
+  // Phase 1 — deduct wallet + create pending record
+  try {
+    await deductWalletBalance(user, numAmount);
+
+    txn = await MerpiTransaction.create({
+      userId,
+      type: 'hotel_booking',
+      reference,
+      amount: numAmount,
+      status: 'pending',
+      walletDeducted: true,
+    });
+  } catch (err) {
+    console.error('[merpi] hotel_booking DB phase failed:', err.message);
+    return res.status(500).json({ success: false, message: 'Could not initiate booking. Please try again.' });
+  }
+
+  // Phase 2 — call MERPI. Docs say POST /v2/merpi/hotels/buy, but the example
+  // code snippets post to /v2/merpi/hotels/book — try both, in that order.
+  const bookingPayload = {
+    room_id,
+    number_of_guests,
+    number_of_rooms,
+    checkin_date,
+    checkout_date,
+    customer_info: customerInfo,
+  };
+
+  let data, lastErr;
+  for (const path of ['/v2/merpi/hotels/buy', '/v2/merpi/hotels/book']) {
+    try {
+      console.log('[merpi] hotel_booking payload:', JSON.stringify({ path, ...bookingPayload }));
+      const res2 = await merpi.post(path, bookingPayload);
+      data = res2.data;
+      console.log('[merpi] hotel_booking response:', JSON.stringify(data));
+      break;
+    } catch (err) {
+      lastErr = err;
+      console.error('[merpi] hotel_booking failed for path', path,
+        '-> status', err.response?.status, 'body', JSON.stringify(err.response?.data));
+      if (!isNotFoundErr(err)) break;
+    }
+  }
+
+  if (!data) {
+    await refundWalletBalance(user, numAmount).catch((re) =>
+      console.error('[merpi] hotel_booking refund failed:', re.message)
+    );
+    await MerpiTransaction.findByIdAndUpdate(txn._id, {
+      status: 'failed',
+      bookingDetails: lastErr.response?.data ?? { error: lastErr.message },
+    }).catch(() => {});
+
+    return res.status(lastErr.response?.status || 502).json({
+      success: false,
+      message: merpiErrMsg(lastErr),
+    });
+  }
+
+  await MerpiTransaction.findByIdAndUpdate(txn._id, {
+    status: 'confirmed',
+    bookingDetails: data.data,
+  }).catch(() => {});
+
+  return res.json({
+    success:    true,
+    reference:  data.data.reference,
+    booking:    data.data,
+    newBalance: user.walletBalance,
+  });
+};
+
 // ─── GENERAL ──────────────────────────────────────────────────────────────────
 
 const getCategories = async (req, res) => {
@@ -546,6 +682,8 @@ module.exports = {
   getExperiences, getExperienceDetails, getExperienceTickets, buyExperienceTickets,
   // Cinema
   getMovies, getCinemaDetails, getAvailableDates, getCinemaTicketTypes, buyCinemaTickets,
+  // Hospitality
+  getHotels, getHotelRooms, bookHotelRoom,
   // General
   getCategories, getBusinesses, getTransaction,
 };

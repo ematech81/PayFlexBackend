@@ -12,7 +12,7 @@ const merpiTransactionSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ['bus_ticket', 'event_ticket', 'cinema_ticket'],
+      enum: ['bus_ticket', 'event_ticket', 'cinema_ticket', 'hotel_booking'],
       required: true,
     },
     reference: {

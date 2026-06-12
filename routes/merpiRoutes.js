@@ -9,6 +9,7 @@ const {
   getSchedules, getSchedulePackages, getSeats, buyBusTicket,
   getExperiences, getExperienceDetails, getExperienceTickets, buyExperienceTickets,
   getMovies, getCinemaDetails, getAvailableDates, getCinemaTicketTypes, buyCinemaTickets,
+  getHotels, getHotelRooms, bookHotelRoom,
   getCategories, getBusinesses, getTransaction,
 } = require('../controllers/merpiController');
 
@@ -34,6 +35,11 @@ router.get('/cinema/:id',         protect, getCinemaDetails);
 router.get('/cinema/:id/dates/:month', protect, getAvailableDates);
 router.get('/cinema/:id/tickets', protect, getCinemaTicketTypes);
 router.post('/cinema/buy',        protect, verifyPin, buyCinemaTickets);
+
+// ── Hospitality ───────────────────────────────────────────────────────────────
+router.get('/hotels',           protect, getHotels);
+router.get('/hotels/:id/rooms', protect, getHotelRooms);
+router.post('/hotels/buy',      protect, verifyPin, bookHotelRoom);
 
 // ── General ───────────────────────────────────────────────────────────────────
 router.get('/categories',              protect, getCategories);
