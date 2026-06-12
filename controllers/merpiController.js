@@ -418,10 +418,12 @@ const buyCinemaTickets = async (req, res) => {
       },
     };
 
+    console.log('[merpi] cinema_ticket hold payload:', JSON.stringify(holdPayload));
     const { data } = await merpi.post('/v1/merpi/validate', holdPayload);
+    console.log('[merpi] cinema_ticket hold response:', JSON.stringify(data));
     reservationIds = data.data.reservations.map((r) => r.reservation_id);
   } catch (err) {
-    console.error('[merpi] cinema_ticket hold failed:', merpiErrMsg(err));
+    console.error('[merpi] cinema_ticket hold failed -> status', err.response?.status, 'body', JSON.stringify(err.response?.data));
     await refundWalletBalance(user, numAmount).catch((re) =>
       console.error('[merpi] cinema_ticket refund failed:', re.message)
     );
@@ -448,7 +450,9 @@ const buyCinemaTickets = async (req, res) => {
       customer_info: customerInfo,
     };
 
+    console.log('[merpi] cinema_ticket buy payload:', JSON.stringify(buyPayload));
     const { data } = await merpi.post('/v1/merpi/experience/buy/tickets', buyPayload);
+    console.log('[merpi] cinema_ticket buy response:', JSON.stringify(data));
 
     await MerpiTransaction.findByIdAndUpdate(txn._id, {
       status: 'confirmed',
@@ -462,7 +466,7 @@ const buyCinemaTickets = async (req, res) => {
       newBalance: user.walletBalance,
     });
   } catch (err) {
-    console.error('[merpi] cinema_ticket buy failed:', merpiErrMsg(err));
+    console.error('[merpi] cinema_ticket buy failed -> status', err.response?.status, 'body', JSON.stringify(err.response?.data));
     await refundWalletBalance(user, numAmount).catch((re) =>
       console.error('[merpi] cinema_ticket refund failed:', re.message)
     );
