@@ -31,7 +31,7 @@ router.post('/events/buy',        protect, verifyPin, buyExperienceTickets);
 // ── Cinema ────────────────────────────────────────────────────────────────────
 router.get('/cinema',             protect, getMovies);
 router.get('/cinema/:id',         protect, getCinemaDetails);
-router.get('/cinema/:id/dates',   protect, getAvailableDates);
+router.get('/cinema/:id/dates/:month', protect, getAvailableDates);
 router.get('/cinema/:id/tickets', protect, getCinemaTicketTypes);
 router.post('/cinema/buy',        protect, verifyPin, buyCinemaTickets);
 

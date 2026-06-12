@@ -261,12 +261,15 @@ const buyExperienceTickets = (req, res) =>
   buyTicket({ req, res, type: 'event_ticket', merpiPath: '/v1/merpi/experiences/tickets/buy' });
 
 // ─── CINEMA ───────────────────────────────────────────────────────────────────
-// Inferred path: /v1/merpi/cinema/... — update if docs show different
+// Cinema experiences share the /v1/merpi/experience endpoints with cinema=true.
+// Scope: daily and weekly cinemas only (monthly is not supported).
 
 const getMovies = async (req, res) => {
   try {
-    const { data } = await merpi.get('/v1/merpi/cinema', { params: req.query });
-    res.json({ success: true, data });
+    const { data } = await merpi.get('/v1/merpi/experience', {
+      params: { ...req.query, cinema: true },
+    });
+    res.json({ success: true, data: data.data });
   } catch (err) {
     console.error('[merpi] getMovies:', merpiErrMsg(err));
     res.status(err.response?.status || 502).json({ success: false, message: merpiErrMsg(err) });
@@ -275,8 +278,8 @@ const getMovies = async (req, res) => {
 
 const getCinemaDetails = async (req, res) => {
   try {
-    const { data } = await merpi.get(`/v1/merpi/cinema/${req.params.id}`);
-    res.json({ success: true, data });
+    const { data } = await merpi.get(`/v1/merpi/experience/v/${req.params.id}`);
+    res.json({ success: true, data: data.data });
   } catch (err) {
     console.error('[merpi] getCinemaDetails:', merpiErrMsg(err));
     res.status(err.response?.status || 502).json({ success: false, message: merpiErrMsg(err) });
@@ -285,8 +288,10 @@ const getCinemaDetails = async (req, res) => {
 
 const getAvailableDates = async (req, res) => {
   try {
-    const { data } = await merpi.get(`/v1/merpi/cinema/${req.params.id}/dates`);
-    res.json({ success: true, data });
+    const { data } = await merpi.get(
+      `/v1/merpi/experience/cinema/dates/${req.params.id}/${req.params.month}`
+    );
+    res.json({ success: true, data: data.data });
   } catch (err) {
     console.error('[merpi] getAvailableDates:', merpiErrMsg(err));
     res.status(err.response?.status || 502).json({ success: false, message: merpiErrMsg(err) });
@@ -295,25 +300,161 @@ const getAvailableDates = async (req, res) => {
 
 const getCinemaTicketTypes = async (req, res) => {
   try {
-    const { data } = await merpi.get(`/v1/merpi/cinema/${req.params.id}/tickets`);
-    res.json({ success: true, data });
+    const { data } = await merpi.get(`/v1/merpi/experience/tickets/${req.params.id}`, {
+      params: { cinema_location_id: req.query.cinema_location_id },
+    });
+    res.json({ success: true, data: data.data });
   } catch (err) {
     console.error('[merpi] getCinemaTicketTypes:', merpiErrMsg(err));
     res.status(err.response?.status || 502).json({ success: false, message: merpiErrMsg(err) });
   }
 };
 
-const buyCinemaTickets = (req, res) =>
-  buyTicket({
-    req,
-    res,
-    type: 'cinema_ticket',
-    merpiPath: '/v1/merpi/cinema/tickets/buy',
-    extraValidate: (body) => {
-      if (!body.attendance_date) return 'attendance_date is required for cinema tickets.';
-      return null;
-    },
-  });
+// "YYYY-MM-DD" -> "DD-MM-YYYY" (MERPI buy endpoint expects DD-MM-YYYY)
+function toDDMMYYYY(dateStr) {
+  const [year, month, day] = dateStr.split('-');
+  return `${day}-${month}-${year}`;
+}
+
+const buyCinemaTickets = async (req, res) => {
+  const userId = req.user.id || req.user._id;
+  const {
+    experience_id,
+    cinema_location_id,
+    attendance_date,
+    time_id,
+    tickets,
+    amount,
+  } = req.body;
+
+  if (!experience_id) {
+    return res.status(400).json({ success: false, message: 'experience_id is required.' });
+  }
+  if (!attendance_date) {
+    return res.status(400).json({ success: false, message: 'attendance_date is required for cinema tickets.' });
+  }
+  if (!time_id) {
+    return res.status(400).json({ success: false, message: 'time_id is required.' });
+  }
+  if (!Array.isArray(tickets) || tickets.length === 0) {
+    return res.status(400).json({ success: false, message: 'At least one ticket is required.' });
+  }
+
+  const numAmount = Number(amount);
+  if (!numAmount || numAmount <= 0) {
+    return res.status(400).json({ success: false, message: 'Valid amount is required.' });
+  }
+
+  let user;
+  try {
+    user = await User.findById(userId).select('+walletBalance');
+    if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
+    validateWalletBalance(user, numAmount);
+  } catch (err) {
+    return res.status(400).json({ success: false, message: err.message });
+  }
+
+  const customerInfo = {
+    name:         user.fullName,
+    email:        user.email,
+    phone_number: (user.phone || '').replace(/\D/g, ''),
+  };
+
+  const reference = genRef('CINEMATICKET');
+  let txn = null;
+
+  // Phase 1 — deduct wallet + create pending record
+  try {
+    await deductWalletBalance(user, numAmount);
+
+    txn = await MerpiTransaction.create({
+      userId,
+      type: 'cinema_ticket',
+      reference,
+      amount: numAmount,
+      status: 'pending',
+      walletDeducted: true,
+    });
+  } catch (err) {
+    console.error('[merpi] cinema_ticket DB phase failed:', err.message);
+    return res.status(500).json({ success: false, message: 'Could not initiate booking. Please try again.' });
+  }
+
+  let reservationIds;
+
+  // Phase 2a — hold inventory
+  try {
+    const holdPayload = {
+      tickets: tickets.map((t) => ({
+        ticket_type: 'entertainment',
+        resource_id: t.id,
+        quantity:    t.count,
+      })),
+      customer_info: {
+        email:        customerInfo.email,
+        phone_number: customerInfo.phone_number,
+      },
+    };
+
+    const { data } = await merpi.post('/v1/merpi/validate', holdPayload);
+    reservationIds = data.data.reservations.map((r) => r.reservation_id);
+  } catch (err) {
+    console.error('[merpi] cinema_ticket hold failed:', merpiErrMsg(err));
+    await refundWalletBalance(user, numAmount).catch((re) =>
+      console.error('[merpi] cinema_ticket refund failed:', re.message)
+    );
+    await MerpiTransaction.findByIdAndUpdate(txn._id, {
+      status: 'failed',
+      bookingDetails: err.response?.data ?? { error: err.message },
+    }).catch(() => {});
+
+    return res.status(err.response?.status || 502).json({
+      success: false,
+      message: merpiErrMsg(err),
+    });
+  }
+
+  // Phase 2b — confirm booking
+  try {
+    const buyPayload = {
+      reservation_ids: reservationIds,
+      tickets,
+      experience_id,
+      ...(cinema_location_id ? { cinema_location_id } : {}),
+      attendance_date: toDDMMYYYY(attendance_date),
+      time_id,
+      customer_info: customerInfo,
+    };
+
+    const { data } = await merpi.post('/v1/merpi/experience/buy/tickets', buyPayload);
+
+    await MerpiTransaction.findByIdAndUpdate(txn._id, {
+      status: 'confirmed',
+      bookingDetails: data.data,
+    }).catch(() => {});
+
+    return res.json({
+      success:    true,
+      reference:  data.data.reference,
+      booking:    data.data,
+      newBalance: user.walletBalance,
+    });
+  } catch (err) {
+    console.error('[merpi] cinema_ticket buy failed:', merpiErrMsg(err));
+    await refundWalletBalance(user, numAmount).catch((re) =>
+      console.error('[merpi] cinema_ticket refund failed:', re.message)
+    );
+    await MerpiTransaction.findByIdAndUpdate(txn._id, {
+      status: 'failed',
+      bookingDetails: err.response?.data ?? { error: err.message },
+    }).catch(() => {});
+
+    return res.status(err.response?.status || 502).json({
+      success: false,
+      message: merpiErrMsg(err),
+    });
+  }
+};
 
 // ─── GENERAL ──────────────────────────────────────────────────────────────────
 
