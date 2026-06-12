@@ -5,6 +5,7 @@ const crypto = require("crypto");
 const nodemailer = require("nodemailer");
 const { v2: cloudinary } = require("cloudinary");
 const User = require("../models/user");
+const { generateAlphanumericOTP } = require("../service/bulkSmsService");
 
 // Configure Cloudinary (reads from env at call time)
 cloudinary.config({
@@ -37,10 +38,11 @@ const signToken = (user) =>
   ); 
 
 /**
- * Generates a secure 6-digit numeric OTP
- * @returns {String} 6-digit OTP string
+ * Generates a 6-character alphanumeric access key (always mixes letters
+ * and digits — required for delivery via BulkSMS Nigeria)
+ * @returns {String} 6-character access key
  */
-const generateOtp = () => crypto.randomInt(100000, 999999).toString();
+const generateOtp = () => generateAlphanumericOTP();
 
 /**
  * Converts Nigerian phone numbers to E.164 format
@@ -214,7 +216,7 @@ exports.register = async (req, res, next) => {
     // Step 8: Return success response
     return res.status(201).json({
       success: true,
-      message: "Registration successful. We sent a code to your phone.",
+      message: "Registration successful. Your access key has been sent. It may take up to 2 minutes to arrive.",
       userId: user._id,
       phone: maskPhone(user.phone),
       expiresInMinutes: OTP_EXP_MIN,
@@ -281,11 +283,11 @@ exports.verifyPhoneOtpPublic = async (req, res, next) => {
       });
     }
 
-    // Validate OTP format (6 digits)
-    if (!/^\d{6}$/.test(otp.trim())) {
+    // Validate OTP format (6-character access key)
+    if (!/^[A-Z0-9]{6}$/i.test(otp.trim())) {
       return res.status(400).json({
         success: false,
-        message: "OTP must be exactly 6 digits",
+        message: "Access key must be exactly 6 characters",
       });
     }
 
@@ -342,7 +344,7 @@ exports.verifyPhoneOtpPublic = async (req, res, next) => {
     }
 
     // Step 7: Verify OTP
-    const isValidOTP = await bcrypt.compare(String(otp.trim()), user.phoneOTP);
+    const isValidOTP = await bcrypt.compare(String(otp.trim()).toUpperCase(), user.phoneOTP);
 
     if (!isValidOTP) {
       console.log(`❌ Invalid OTP attempt for ${maskPhone(normalizedPhone)}`);
@@ -471,7 +473,7 @@ exports.resendPhoneOtpPublic = async (req, res, next) => {
     const smsResult = await sendOtp(user.phone, otp, OTP_EXP_MIN);
 
     res.json({
-      message: "OTP resent successfully",
+      message: "Your access key has been sent. It may take up to 2 minutes to arrive.",
       to: maskPhone(user.phone),
       expiresInMinutes: OTP_EXP_MIN,
       ...(smsResult?.devOtp && { devOtp: smsResult.devOtp }),
@@ -589,7 +591,7 @@ exports.login = async (req, res, next) => {
       return res.status(200).json({
         success: true,
         isNewDevice: true,
-        message: "New device detected. We sent a verification code to your phone.",
+        message: "New device detected. Your access key has been sent. It may take up to 2 minutes to arrive.",
         phone: maskPhone(user.phone),
         expiresInMinutes: OTP_EXP_MIN,
         ...(smsResult?.devOtp && { devOtp: smsResult.devOtp }),
@@ -658,10 +660,10 @@ exports.verifyDeviceOtp = async (req, res, next) => {
       });
     }
 
-    if (!/^\d{6}$/.test(otp.trim())) {
+    if (!/^[A-Z0-9]{6}$/i.test(otp.trim())) {
       return res.status(400).json({
         success: false,
-        message: "OTP must be exactly 6 digits",
+        message: "Access key must be exactly 6 characters",
       });
     }
 
@@ -708,7 +710,7 @@ exports.verifyDeviceOtp = async (req, res, next) => {
     }
 
     // Step 6: Verify OTP
-    const isValidOTP = await bcrypt.compare(String(otp.trim()), user.phoneOTP);
+    const isValidOTP = await bcrypt.compare(String(otp.trim()).toUpperCase(), user.phoneOTP);
 
     if (!isValidOTP) {
       console.log(`❌ Invalid device OTP for ${maskPhone(normalizedPhone)}`);
@@ -850,7 +852,7 @@ exports.resendDeviceOtp = async (req, res, next) => {
 
     return res.status(200).json({
       success: true,
-      message: "Verification code sent successfully",
+      message: "Your access key has been sent. It may take up to 2 minutes to arrive.",
       expiresInMinutes: OTP_EXP_MIN,
       ...(smsResult?.devOtp && { devOtp: smsResult.devOtp }),
     });
@@ -1141,17 +1143,17 @@ exports.forgotLoginPin = async (req, res) => {
   const user = await User.findOne({ phone });
   if (!user) return res.status(404).json({ success: false, message: "User not found" });
 
-  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  const code = generateAlphanumericOTP();
   user.resetCode = code;
   user.resetCodeExpires = Date.now() + 10 * 60 * 1000; // 10 min
   await user.save();
 
   const smsResult = await sendOtp(user.phone, code, 10);
-  if (user.email) await sendEmail(user.email, "PayFlex PIN Reset", `Your PayFlex PIN reset code is ${code}. It expires in 10 minutes.`);
+  if (user.email) await sendEmail(user.email, "PayFlex PIN Reset", `Your PayFlex access key is ${code}. It expires in 10 minutes. Keep it private.`);
 
   res.json({
     success: true,
-    message: "Reset code sent",
+    message: "Your access key has been sent. It may take up to 2 minutes to arrive.",
     ...(smsResult?.devOtp && { devOtp: smsResult.devOtp }),
   });
 };
@@ -1161,7 +1163,7 @@ exports.verifyResetCode = async (req, res) => {
   const { phone, code } = req.body;
   const user = await User.findOne({
     phone,
-    resetCode: code,
+    resetCode: String(code || "").trim().toUpperCase(),
     resetCodeExpires: { $gt: Date.now() },
   });
 
@@ -1221,7 +1223,7 @@ exports.resetTransactionPin = async (req, res) => {
     if (!user.phoneOTP || !user.phoneOTPExpires || user.phoneOTPExpires < Date.now()) {
       return res.status(403).json({ message: "Invalid or expired OTP" });
     }
-    const isValidOTP = await bcrypt.compare(String(otp), user.phoneOTP);
+    const isValidOTP = await bcrypt.compare(String(otp).trim().toUpperCase(), user.phoneOTP);
     if (!isValidOTP) {
       return res.status(403).json({ message: "Invalid or expired OTP" });
     }
@@ -1246,7 +1248,7 @@ exports.resetLoginPin = async (req, res) => {
     if (!user.phoneOTP || !user.phoneOTPExpires || user.phoneOTPExpires < Date.now()) {
       return res.status(403).json({ message: "Invalid or expired OTP" });
     }
-    const isValidOTP = await bcrypt.compare(String(otp), user.phoneOTP);
+    const isValidOTP = await bcrypt.compare(String(otp).trim().toUpperCase(), user.phoneOTP);
     if (!isValidOTP) {
       return res.status(403).json({ message: "Invalid or expired OTP" });
     }
