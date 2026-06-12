@@ -442,7 +442,11 @@ const buyCinemaTickets = async (req, res) => {
   try {
     const buyPayload = {
       reservation_ids: reservationIds,
-      tickets,
+      tickets: tickets.map((t) => ({
+        ticket_type: 'entertainment',
+        resource_id: t.id,
+        quantity:    t.count,
+      })),
       experience_id,
       ...(cinema_location_id ? { cinema_location_id } : {}),
       attendance_date: toDDMMYYYY(attendance_date),
