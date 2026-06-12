@@ -286,15 +286,35 @@ const getCinemaDetails = async (req, res) => {
   }
 };
 
+const MONTH_NAME_TO_NUM = {
+  january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
+  july: 7, august: 8, september: 9, october: 10, november: 11, december: 12,
+};
+
 const getAvailableDates = async (req, res) => {
+  const { id, month } = req.params;
+
   try {
-    const { data } = await merpi.get(
-      `/v1/merpi/experience/cinema/dates/${req.params.id}/${req.params.month}`
-    );
-    res.json({ success: true, data: data.data });
+    const { data } = await merpi.get(`/v1/merpi/experience/cinema/dates/${id}/${month}`);
+    return res.json({ success: true, data: data.data });
   } catch (err) {
-    console.error('[merpi] getAvailableDates:', merpiErrMsg(err));
-    res.status(err.response?.status || 502).json({ success: false, message: merpiErrMsg(err) });
+    const msg = merpiErrMsg(err);
+    const monthNum = MONTH_NAME_TO_NUM[month.toLowerCase()];
+
+    // The MERPI docs say `month` should be a name (e.g. "January"), but some
+    // deployments reject that and expect the numeric month instead.
+    if (/month/i.test(msg) && monthNum) {
+      try {
+        const { data } = await merpi.get(`/v1/merpi/experience/cinema/dates/${id}/${monthNum}`);
+        return res.json({ success: true, data: data.data });
+      } catch (err2) {
+        console.error('[merpi] getAvailableDates (numeric month fallback):', merpiErrMsg(err2));
+        return res.status(err2.response?.status || 502).json({ success: false, message: merpiErrMsg(err2) });
+      }
+    }
+
+    console.error('[merpi] getAvailableDates:', msg);
+    return res.status(err.response?.status || 502).json({ success: false, message: msg });
   }
 };
 
