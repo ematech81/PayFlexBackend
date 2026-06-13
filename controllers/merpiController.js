@@ -93,6 +93,23 @@ async function buyTicket({ req, res, type, merpiPath, extraValidate }) {
   // Phase 2 — call MERPI API
   try {
     const { pin, amount: _amt, ...ticketData } = req.body;
+
+    // Normalize phone numbers and backfill dob in customer_info — MERPI's
+    // hotel booking endpoint rejects requests missing/malformed customer_info
+    // (see bookHotelRoom), so bring bus/event payloads in line with it.
+    if (ticketData.customer_info) {
+      if (ticketData.customer_info.phone_number) {
+        ticketData.customer_info.phone_number = normalizeNgPhone(ticketData.customer_info.phone_number);
+      }
+      if (ticketData.customer_info.kin?.phone_number) {
+        ticketData.customer_info.kin.phone_number = normalizeNgPhone(ticketData.customer_info.kin.phone_number);
+      }
+      if (!ticketData.customer_info.dob) {
+        const dob = user.ninVerification?.dateOfBirth || user.bvnVerification?.dateOfBirth;
+        if (dob) ticketData.customer_info.dob = dob;
+      }
+    }
+
     console.log(`[merpi] ${type} request payload:`, JSON.stringify({ ...ticketData, reference }));
     const merpiRes = await merpi.post(merpiPath, { ...ticketData, reference });
     const data = merpiRes.data;
@@ -383,10 +400,12 @@ const buyCinemaTickets = async (req, res) => {
     return res.status(400).json({ success: false, message: err.message });
   }
 
+  const dob = user.ninVerification?.dateOfBirth || user.bvnVerification?.dateOfBirth;
   const customerInfo = {
     name:         user.fullName,
     email:        user.email,
-    phone_number: (user.phone || '').replace(/\D/g, ''),
+    phone_number: normalizeNgPhone(user.phone),
+    ...(dob && { dob }),
   };
 
   const reference = genRef('CINEMATICKET');
