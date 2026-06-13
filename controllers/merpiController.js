@@ -32,13 +32,13 @@ function isNotFoundErr(err) {
   return err.response?.status === 404;
 }
 
-// Normalize a Nigerian phone number to "+234XXXXXXXXXX" (13 digits, incl.
-// country code, no leading 0) regardless of how it's currently stored.
+// Normalize a Nigerian phone number to "234XXXXXXXXXX" (13 digits, incl.
+// country code, no leading "+" or "0") regardless of how it's currently stored.
 function normalizeNgPhone(phone) {
   let digits = (phone || '').replace(/\D/g, '');
   if (digits.startsWith('234')) digits = digits.slice(3);
   if (digits.startsWith('0')) digits = digits.slice(1);
-  return `+234${digits}`;
+  return `234${digits}`;
 }
 
 async function buyTicket({ req, res, type, merpiPath, extraValidate }) {
