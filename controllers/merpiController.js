@@ -518,7 +518,7 @@ const getHotelRooms = async (req, res) => {
 
 const bookHotelRoom = async (req, res) => {
   const userId = req.user.id || req.user._id;
-  const { room_id, number_of_guests, number_of_rooms, checkin_date, checkout_date, amount } = req.body;
+  const { room_id, number_of_guests, number_of_rooms, checkin_date, checkout_date, amount, guest_info } = req.body;
 
   if (!room_id) {
     return res.status(400).json({ success: false, message: 'room_id is required.' });
@@ -528,6 +528,9 @@ const bookHotelRoom = async (req, res) => {
   }
   if (!checkin_date || !checkout_date) {
     return res.status(400).json({ success: false, message: 'checkin_date and checkout_date are required.' });
+  }
+  if (!guest_info || !guest_info.name || !guest_info.email || !guest_info.phone_number || !guest_info.dob) {
+    return res.status(400).json({ success: false, message: 'guest_info (name, email, phone_number, dob) is required.' });
   }
 
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -550,9 +553,10 @@ const bookHotelRoom = async (req, res) => {
   }
 
   const customerInfo = {
-    name:         user.fullName,
-    email:        user.email,
-    phone_number: normalizeNgPhone(user.phone),
+    name:         guest_info.name,
+    email:        guest_info.email,
+    phone_number: normalizeNgPhone(guest_info.phone_number),
+    dob:          guest_info.dob,
   };
 
   const reference = genRef('HOTELBOOKING');
