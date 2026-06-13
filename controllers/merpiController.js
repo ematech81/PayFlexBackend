@@ -32,6 +32,15 @@ function isNotFoundErr(err) {
   return err.response?.status === 404;
 }
 
+// Normalize a Nigerian phone number to "+234XXXXXXXXXX" (13 digits, incl.
+// country code, no leading 0) regardless of how it's currently stored.
+function normalizeNgPhone(phone) {
+  let digits = (phone || '').replace(/\D/g, '');
+  if (digits.startsWith('234')) digits = digits.slice(3);
+  if (digits.startsWith('0')) digits = digits.slice(1);
+  return `+234${digits}`;
+}
+
 async function buyTicket({ req, res, type, merpiPath, extraValidate }) {
   const userId = req.user.id || req.user._id;
 
@@ -521,6 +530,11 @@ const bookHotelRoom = async (req, res) => {
     return res.status(400).json({ success: false, message: 'checkin_date and checkout_date are required.' });
   }
 
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  if (new Date(`${checkin_date}T00:00:00`) <= today) {
+    return res.status(400).json({ success: false, message: 'checkin_date must be in the future.' });
+  }
+
   const numAmount = Number(amount);
   if (!numAmount || numAmount <= 0) {
     return res.status(400).json({ success: false, message: 'Valid amount is required.' });
@@ -538,7 +552,7 @@ const bookHotelRoom = async (req, res) => {
   const customerInfo = {
     name:         user.fullName,
     email:        user.email,
-    phone_number: user.phone,
+    phone_number: normalizeNgPhone(user.phone),
   };
 
   const reference = genRef('HOTELBOOKING');
