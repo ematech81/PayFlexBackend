@@ -474,15 +474,38 @@ const buyCinemaTickets = async (req, res) => {
         quantity:    t.count,
       })),
       experience_id,
-      ...(cinema_location_id ? { cinema_location_id } : {}),
+      ...(cinema_location_id != null ? { cinema_location_id: Number(cinema_location_id) } : {}),
       attendance_date,
-      time_id,
+      time_id: Number(time_id),
       customer_info: customerInfo,
     };
 
-    console.log('[merpi] cinema_ticket buy payload:', JSON.stringify(buyPayload));
-    const { data } = await merpi.post('/v1/merpi/experience/buy/tickets', buyPayload);
-    console.log('[merpi] cinema_ticket buy response:', JSON.stringify(data));
+    // Try multiple known path variants — MERPI docs show inconsistent casing
+    // between singular/plural and path ordering.
+    const cinemaBuyPaths = [
+      '/v1/merpi/experience/buy/tickets',
+      '/v1/merpi/experiences/buy/tickets',
+      '/v1/merpi/experience/tickets/buy',
+    ];
+
+    let data;
+    let lastErr;
+    for (const path of cinemaBuyPaths) {
+      try {
+        console.log('[merpi] cinema_ticket buy payload:', JSON.stringify({ path, ...buyPayload }));
+        const res2 = await merpi.post(path, buyPayload);
+        data = res2.data;
+        console.log('[merpi] cinema_ticket buy response:', JSON.stringify(data));
+        break;
+      } catch (err) {
+        lastErr = err;
+        console.error('[merpi] cinema_ticket buy failed for path', path,
+          '-> status', err.response?.status, 'body', JSON.stringify(err.response?.data));
+        if (!isNotFoundErr(err)) break;
+      }
+    }
+
+    if (!data) throw lastErr;
 
     await MerpiTransaction.findByIdAndUpdate(txn._id, {
       status: 'confirmed',
