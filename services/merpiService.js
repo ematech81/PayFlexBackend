@@ -20,7 +20,7 @@ merpi.interceptors.request.use((config) => {
     err.statusCode = 503;
     throw err;
   }
-  config.headers['Authorization'] = `Bearer ${key.trim()}`;
+  config.headers['X-API-KEY'] = key.trim();
   return config;
 });
 
