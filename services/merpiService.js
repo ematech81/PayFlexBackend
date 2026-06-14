@@ -3,11 +3,11 @@
 const axios = require('axios');
 
 const merpi = axios.create({
-  baseURL: process.env.MERPI_BASE_URL || 'https://api.syticks.com',
+  baseURL: process.env.MERPI_BASE_URL || 'https://merpi.syticks.com/api',
   timeout: 30_000,
   headers: {
-    'Content-Type':    'application/json',
-    'Accept':          'application/json',
+    'Content-Type':      'application/json',
+    'Accept':            'application/json',
     'TransactionMedium': 'Mobile',
   },
 });
@@ -20,7 +20,7 @@ merpi.interceptors.request.use((config) => {
     err.statusCode = 503;
     throw err;
   }
-  config.headers['X-API-KEY'] = key.trim();
+  config.headers['Authorization'] = `Bearer ${key.trim()}`;
   return config;
 });
 
