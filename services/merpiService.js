@@ -3,7 +3,7 @@
 const axios = require('axios');
 
 const merpi = axios.create({
-  baseURL: process.env.MERPI_BASE_URL || 'https://merpi.syticks.com/api',
+  baseURL: process.env.MERPI_BASE_URL || 'https://api.syticks.com',
   timeout: 30_000,
   headers: {
     'Content-Type':      'application/json',
