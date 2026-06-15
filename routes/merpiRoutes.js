@@ -13,6 +13,14 @@ const {
   getCategories, getBusinesses, getTransaction,
 } = require('../controllers/merpiController');
 
+// Disable ETag/304 caching for all MERPI routes — live availability data must
+// never be served stale from the HTTP cache.
+router.use((req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  next();
+});
+
 // ── Bus Ticketing ─────────────────────────────────────────────────────────────
 router.get('/bus/states',         protect, getStates);
 router.get('/bus/cities',         protect, getCities);
