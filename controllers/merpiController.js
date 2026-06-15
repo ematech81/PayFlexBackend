@@ -779,13 +779,23 @@ const bookHotelRoom = async (req, res) => {
 // ─── GENERAL ──────────────────────────────────────────────────────────────────
 
 const getCategories = async (req, res) => {
-  try {
-    const { data } = await merpi.get('/v1/merpi/categories');
-    res.json({ success: true, data });
-  } catch (err) {
-    console.error('[merpi] getCategories:', merpiErrMsg(err));
-    res.status(err.response?.status || 502).json({ success: false, message: merpiErrMsg(err) });
+  // MERPI doesn't expose a dedicated categories endpoint — return empty array
+  // gracefully so the category filter strip is simply hidden rather than
+  // crashing the caller with a 404.
+  const paths = ['/v1/merpi/categories', '/v1/merpi/experience/categories'];
+  for (const path of paths) {
+    try {
+      const { data } = await merpi.get(path);
+      return res.json({ success: true, data: data.data ?? data });
+    } catch (err) {
+      if (!isNotFoundErr(err)) {
+        console.error('[merpi] getCategories:', merpiErrMsg(err));
+        return res.status(err.response?.status || 502).json({ success: false, message: merpiErrMsg(err) });
+      }
+    }
   }
+  // All paths returned 404 — return empty list so UI degrades gracefully
+  return res.json({ success: true, data: [] });
 };
 
 const getBusinesses = async (req, res) => {
