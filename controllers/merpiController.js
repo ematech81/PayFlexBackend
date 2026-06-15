@@ -11,13 +11,6 @@ const {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-// MERPI cinema buy endpoint expects DD-MM-YYYY; the frontend sends YYYY-MM-DD.
-function toMerpiDate(ymd) {
-  if (!ymd) return ymd;
-  if (/^\d{2}-\d{2}-\d{4}$/.test(ymd)) return ymd; // already DD-MM-YYYY
-  const [y, m, d] = ymd.split('-');
-  return `${d}-${m}-${y}`;
-}
 
 function genRef(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
@@ -479,7 +472,7 @@ const buyCinemaTickets = async (req, res) => {
       tickets: tickets.map((t) => ({ id: t.id, count: t.count })),
       experience_id,
       ...(cinema_location_id != null ? { cinema_location_id: Number(cinema_location_id) } : {}),
-      attendance_date: toMerpiDate(attendance_date),
+      attendance_date,
       time_id: Number(time_id),
       customer_info: customerInfo,
     };
