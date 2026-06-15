@@ -16,6 +16,10 @@ const {
 // Disable ETag/304 caching for all MERPI routes — live availability data must
 // never be served stale from the HTTP cache.
 router.use((req, res, next) => {
+  // Strip conditional-request headers so Express never computes a 304 for
+  // live availability data — even if the client has a stale cached ETag.
+  delete req.headers['if-none-match'];
+  delete req.headers['if-modified-since'];
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.setHeader('Pragma', 'no-cache');
   next();
