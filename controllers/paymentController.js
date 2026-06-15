@@ -20,7 +20,8 @@ const bcrypt   = require('bcryptjs');
 const mongoose = require('mongoose');
 
 const crypto         = require('crypto');
-const Transaction    = require('../models/transaction');
+const Transaction        = require('../models/transaction');
+const MerpiTransaction   = require('../models/MerpiTransaction');
 const User           = require('../models/user');
 const pricingService         = require('../services/pricingService');
 const vtuAfricaService       = require('../services/vtuAfricaService');
@@ -807,7 +808,11 @@ const getTransactionByReference = async (req, res) => {
   try {
     const { reference } = req.params;
     const userId        = req.user?.id || req.user?._id;
-    const transaction   = await Transaction.findOne({ reference, userId });
+    let transaction = await Transaction.findOne({ reference, userId }).lean();
+    if (!transaction) {
+      const merpi = await MerpiTransaction.findOne({ reference, userId }).lean();
+      if (merpi) transaction = { ...merpi, isMerpi: true };
+    }
     if (!transaction) return res.status(404).json({ success: false, message: 'Transaction not found.' });
     res.json({ success: true, data: transaction });
   } catch (error) {
@@ -815,51 +820,67 @@ const getTransactionByReference = async (req, res) => {
   }
 };
 
+const MERPI_TYPES = ['bus_ticket', 'event_ticket', 'cinema_ticket', 'hotel_booking'];
+
 const getTransactionHistory = async (req, res) => {
   try {
     const userId = req.user?.id || req.user?._id;
     const { category, status, startDate, endDate, page = 1, limit = 20 } = req.query;
 
-    const query = { userId };
-    if (category && category !== 'all') query.type   = category;
-    if (status && status !== 'all')     query.status = status;
+    const dateFilter = {};
     if (startDate || endDate) {
-      query.createdAt = {};
-      if (startDate) query.createdAt.$gte = new Date(startDate);
+      dateFilter.createdAt = {};
+      if (startDate) dateFilter.createdAt.$gte = new Date(startDate);
       if (endDate) {
         const end = new Date(endDate);
         end.setHours(23, 59, 59, 999);
-        query.createdAt.$lte = end;
+        dateFilter.createdAt.$lte = end;
       }
     }
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    const [transactions, totalCount, stats] = await Promise.all([
-      Transaction.find(query).sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit)).lean(),
-      Transaction.countDocuments(query),
-      Transaction.aggregate([
-        { $match: query },
-        { $group: {
-          _id: null,
-          totalAmount:  { $sum: '$amount' },
-          successCount: { $sum: { $cond: [{ $eq: ['$status', 'success'] }, 1, 0] } },
-          failedCount:  { $sum: { $cond: [{ $eq: ['$status', 'failed']  }, 1, 0] } },
-          pendingCount: { $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] } },
-        }},
-      ]),
-    ]);
+    const uid          = new mongoose.Types.ObjectId(userId);
+    const isMerpiCat   = MERPI_TYPES.includes(category);
+    const isRegularCat = category && category !== 'all' && !isMerpiCat;
+
+    // Regular transactions
+    let regularTxns = [];
+    if (!isMerpiCat) {
+      const q = { userId: uid, ...dateFilter };
+      if (isRegularCat) q.type = category;
+      if (status && status !== 'all') q.status = status;
+      regularTxns = await Transaction.find(q).sort({ createdAt: -1 }).limit(500).lean();
+    }
+
+    // MERPI transactions (confirmed = success in MERPI world)
+    let merpiTxns = [];
+    if (!isRegularCat) {
+      const q = { userId: uid, ...dateFilter };
+      if (isMerpiCat) q.type = category;
+      if (status && status !== 'all') {
+        q.status = status === 'success' ? 'confirmed' : status;
+      }
+      const raw = await MerpiTransaction.find(q).sort({ createdAt: -1 }).limit(500).lean();
+      merpiTxns = raw.map((t) => ({ ...t, isMerpi: true }));
+    }
+
+    // Merge, sort descending, paginate in-memory
+    const all        = [...regularTxns, ...merpiTxns].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    const totalCount = all.length;
+    const pageInt    = parseInt(page);
+    const limitInt   = parseInt(limit);
+    const transactions = all.slice((pageInt - 1) * limitInt, pageInt * limitInt);
 
     res.json({
       success: true,
       data: {
         transactions,
         pagination: {
-          currentPage: parseInt(page),
-          totalPages:  Math.ceil(totalCount / parseInt(limit)),
+          currentPage: pageInt,
+          totalPages:  Math.ceil(totalCount / limitInt),
           totalCount,
-          hasMore:     parseInt(page) < Math.ceil(totalCount / parseInt(limit)),
+          hasMore:     pageInt < Math.ceil(totalCount / limitInt),
         },
-        stats: stats[0] || { totalAmount: 0, successCount: 0, failedCount: 0, pendingCount: 0 },
+        stats: { totalAmount: 0, successCount: 0, failedCount: 0, pendingCount: 0 },
       },
     });
   } catch (error) {
