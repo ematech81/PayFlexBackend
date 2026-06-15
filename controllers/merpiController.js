@@ -171,6 +171,8 @@ async function buyTicket({ req, res, type, merpiPath, extraValidate }) {
 const getStates = async (req, res) => {
   try {
     const { data } = await merpi.get('/v1/merpi/transport/states', { params: req.query });
+    console.log('[merpi] getStates count:', Array.isArray(data?.data?.states) ? data.data.states.length : 'N/A',
+      '| sample id/name:', JSON.stringify(data?.data?.states?.[0])?.slice(0, 100));
     res.json({ success: true, data });
   } catch (err) {
     console.error('[merpi] getStates:', merpiErrMsg(err));
@@ -181,6 +183,8 @@ const getStates = async (req, res) => {
 const getCities = async (req, res) => {
   try {
     const { data } = await merpi.get('/v1/merpi/transport/cities', { params: req.query });
+    console.log('[merpi] getCities count:', Array.isArray(data?.data?.cities) ? data.data.cities.length : 'N/A',
+      '| sample:', JSON.stringify(data?.data?.cities?.[0])?.slice(0, 150));
     res.json({ success: true, data });
   } catch (err) {
     console.error('[merpi] getCities:', merpiErrMsg(err));
@@ -191,12 +195,18 @@ const getCities = async (req, res) => {
 const getRoutes = async (req, res) => {
   try {
     const { from_city_id, to_city_id, price, business_id, search } = req.query;
+    console.log('[merpi] getRoutes params:', { from_city_id, to_city_id });
     const { data } = await merpi.get('/v2/merpi/transport/routes', {
       params: { from_city_id, to_city_id, price, business_id, search },
     });
+    console.log('[merpi] getRoutes raw response keys:', Object.keys(data || {}),
+      '| data.data type:', typeof data?.data,
+      '| routes count:', Array.isArray(data?.data?.routes) ? data.data.routes.length : 'N/A',
+      '| sample:', JSON.stringify(data?.data)?.slice(0, 300));
     res.json({ success: true, data });
   } catch (err) {
-    console.error('[merpi] getRoutes:', merpiErrMsg(err));
+    console.error('[merpi] getRoutes error:', err.response?.status, merpiErrMsg(err));
+    console.error('[merpi] getRoutes error body:', JSON.stringify(err.response?.data));
     res.status(err.response?.status || 502).json({ success: false, message: merpiErrMsg(err) });
   }
 };
