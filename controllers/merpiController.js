@@ -263,6 +263,9 @@ const getExperiences = async (req, res) => {
     const { data } = await merpi.get('/v1/merpi/experience', {
       params: { ...req.query, cinema: false },
     });
+    console.log('[merpi] getExperiences raw response keys:', Object.keys(data || {}),
+      '| data.data type:', Array.isArray(data?.data) ? `array(${data.data.length})` : typeof data?.data,
+      '| sample:', JSON.stringify(data?.data)?.slice(0, 200));
     res.json({ success: true, data: data.data });
   } catch (err) {
     console.error('[merpi] getExperiences:', merpiErrMsg(err));
