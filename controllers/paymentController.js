@@ -21,7 +21,7 @@ const mongoose = require('mongoose');
 
 const crypto         = require('crypto');
 const Transaction        = require('../models/transaction');
-const MerpiTransaction   = require('../models/MerpiTransaction');
+const MerpiTransaction   = require('../models/merpiTransaction');
 const User           = require('../models/user');
 const pricingService         = require('../services/pricingService');
 const vtuAfricaService       = require('../services/vtuAfricaService');
