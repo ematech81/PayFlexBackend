@@ -120,7 +120,13 @@ const registerBusinessName = async (req, res) => {
   const priceKey = priorityService ? 'bn_priority' : 'bn_standard';
   const pricing  = pricingService.getCACPrice(priceKey);
 
-  const user = await User.findById(req.user.id).select('+walletBalance');
+  let user;
+  try {
+    user = await User.findById(req.user.id).select('+walletBalance');
+  } catch (dbErr) {
+    console.error('[cac] registerBusinessName user lookup failed:', dbErr.message);
+    return res.status(500).json({ success: false, message: 'Could not retrieve user. Please try again.' });
+  }
   if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
 
   if ((user.walletBalance || 0) < pricing.userPays) {
@@ -401,7 +407,13 @@ const searchBusiness = async (req, res) => {
 
   const pricing = pricingService.getCACPrice(typeConfig.priceKey);
 
-  const user = await User.findById(req.user.id).select('+walletBalance');
+  let user;
+  try {
+    user = await User.findById(req.user.id).select('+walletBalance');
+  } catch (dbErr) {
+    console.error('[cac] searchBusiness user lookup failed:', dbErr.message);
+    return res.status(500).json({ success: false, message: 'Could not retrieve user. Please try again.' });
+  }
   if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
 
   if ((user.walletBalance || 0) < pricing.userPays) {
