@@ -1084,22 +1084,13 @@ exports.setTransactionPin = async (req, res) => {
 exports.forgotLoginPin = async (req, res) => {
   const { phone } = req.body;
   const normalized = toE164(phone);
-  console.log(`[forgotPin] raw="${phone}" normalized="${normalized}"`);
   const user = await User.findOne({ phone: normalized });
-  if (!user) {
-    // Debug: find any user whose phone ends with the last 8 digits
-    const suffix = normalized.slice(-8);
-    const nearby = await User.findOne({ phone: { $regex: suffix + '$' } }).select('phone');
-    console.log(`[forgotPin] no exact match. Nearby phone in DB: ${nearby?.phone ?? 'none'}`);
-    return res.status(404).json({ success: false, message: "User not found" });
-  }
-  console.log(`[forgotPin] user found: ${user.phone}`);
+  if (!user) return res.status(404).json({ success: false, message: "User not found" });
 
   const code = generateAlphanumericOTP();
   user.resetCode = code;
   user.resetCodeExpires = new Date(Date.now() + 10 * 60 * 1000);
   await user.save();
-  console.log(`[forgotPin] saved resetCode="${code}" expires=${user.resetCodeExpires}`);
 
   const { devOtp } = await dispatchOtp(user.phone, user.email, code);
 
@@ -1117,20 +1108,16 @@ exports.verifyResetCode = async (req, res) => {
   const submittedCode = String(code || "").trim().toUpperCase();
 
   const user = await User.findOne({ phone: normalized }).select('+resetCode +resetCodeExpires');
-  console.log(`[verifyReset] phone="${normalized}" submitted="${submittedCode}"`);
-  console.log(`[verifyReset] user found=${!!user} storedCode="${user?.resetCode}" expires=${user?.resetCodeExpires}`);
 
   if (!user) {
     return res.status(400).json({ success: false, message: "Invalid or expired code" });
   }
 
   if (!user.resetCode || user.resetCode !== submittedCode) {
-    console.log(`[verifyReset] code mismatch: stored="${user.resetCode}" submitted="${submittedCode}"`);
     return res.status(400).json({ success: false, message: "Invalid or expired code" });
   }
 
   if (!user.resetCodeExpires || user.resetCodeExpires < new Date()) {
-    console.log(`[verifyReset] code expired: expires=${user.resetCodeExpires} now=${new Date()}`);
     return res.status(400).json({ success: false, message: "Invalid or expired code" });
   }
 
