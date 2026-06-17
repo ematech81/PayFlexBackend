@@ -2,7 +2,7 @@ const { validationResult } = require("express-validator");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
-const nodemailer = require("nodemailer");
+const axios = require("axios");
 const { v2: cloudinary } = require("cloudinary");
 const User = require("../models/user");
 const PendingRegistration = require("../models/PendingRegistration");
@@ -114,45 +114,37 @@ async function dispatchOtp(phone, email, otp) {
 }
 
 /**
- * Sends a plain-text email via nodemailer (SMTP configured via env vars)
- * Falls back to console logging in development when SMTP is not configured
+ * Sends email via Brevo HTTP API (port 443 — never blocked by cloud providers).
+ * Requires BREVO_API_KEY env var. Falls back to console log if not set.
  */
 async function sendEmail(to, subject, text) {
-  if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) {
-    console.log(`⚠️  [EMAIL] SMTP not configured — skipping email to ${to}`);
+  const apiKey = process.env.BREVO_API_KEY;
+  if (!apiKey) {
+    console.log(`⚠️  [EMAIL] BREVO_API_KEY not set — skipping email to ${to}`);
     return;
   }
 
-  const host   = process.env.SMTP_HOST;
-  const port   = Number(process.env.SMTP_PORT) || 587;
-  const secure = process.env.SMTP_SECURE === "true";
+  const senderEmail = process.env.SMTP_FROM || "nwankwolivinus95@gmail.com";
+  console.log(`📧 [EMAIL] Attempting to send to ${to} via Brevo API`);
 
-  console.log(`📧 [EMAIL] Attempting to send to ${to} via ${host}:${port}`);
-
-  const transporter = nodemailer.createTransport({
-    host,
-    port,
-    secure,
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
+  const { data } = await axios.post(
+    "https://api.brevo.com/v3/smtp/email",
+    {
+      sender:      { name: "PayFlex", email: senderEmail },
+      to:          [{ email: to }],
+      subject,
+      textContent: text,
     },
-    tls: {
-      rejectUnauthorized: false, // tolerate self-signed certs on cloud servers
-    },
-    connectionTimeout: 10000, // 10s to establish connection
-    greetingTimeout:   10000,
-    socketTimeout:     15000,
-  });
+    {
+      headers: {
+        "api-key":      apiKey,
+        "Content-Type": "application/json",
+      },
+      timeout: 15000,
+    }
+  );
 
-  const info = await transporter.sendMail({
-    from: `"PayFlex" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
-    to,
-    subject,
-    text,
-  });
-
-  console.log(`✅ [EMAIL] Sent to ${to} — messageId: ${info.messageId}`);
+  console.log(`✅ [EMAIL] Sent to ${to} — messageId: ${data.messageId}`);
 }
 
 // ---------- Main Controller ----------
