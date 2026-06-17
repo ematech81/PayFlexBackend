@@ -1097,8 +1097,9 @@ exports.forgotLoginPin = async (req, res) => {
 
   const code = generateAlphanumericOTP();
   user.resetCode = code;
-  user.resetCodeExpires = Date.now() + 10 * 60 * 1000; // 10 min
+  user.resetCodeExpires = new Date(Date.now() + 10 * 60 * 1000);
   await user.save();
+  console.log(`[forgotPin] saved resetCode="${code}" expires=${user.resetCodeExpires}`);
 
   const { devOtp } = await dispatchOtp(user.phone, user.email, code);
 
@@ -1112,13 +1113,24 @@ exports.forgotLoginPin = async (req, res) => {
 // 2. Verify Reset Code
 exports.verifyResetCode = async (req, res) => {
   const { phone, code } = req.body;
-  const user = await User.findOne({
-    phone: toE164(phone),
-    resetCode: String(code || "").trim().toUpperCase(),
-    resetCodeExpires: { $gt: Date.now() },
-  });
+  const normalized = toE164(phone);
+  const submittedCode = String(code || "").trim().toUpperCase();
+
+  const user = await User.findOne({ phone: normalized }).select('+resetCode +resetCodeExpires');
+  console.log(`[verifyReset] phone="${normalized}" submitted="${submittedCode}"`);
+  console.log(`[verifyReset] user found=${!!user} storedCode="${user?.resetCode}" expires=${user?.resetCodeExpires}`);
 
   if (!user) {
+    return res.status(400).json({ success: false, message: "Invalid or expired code" });
+  }
+
+  if (!user.resetCode || user.resetCode !== submittedCode) {
+    console.log(`[verifyReset] code mismatch: stored="${user.resetCode}" submitted="${submittedCode}"`);
+    return res.status(400).json({ success: false, message: "Invalid or expired code" });
+  }
+
+  if (!user.resetCodeExpires || user.resetCodeExpires < new Date()) {
+    console.log(`[verifyReset] code expired: expires=${user.resetCodeExpires} now=${new Date()}`);
     return res.status(400).json({ success: false, message: "Invalid or expired code" });
   }
 
