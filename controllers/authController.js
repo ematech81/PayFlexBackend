@@ -82,15 +82,17 @@ function getLastSentFromExpiry(expires) {
 // ---------- SMS Service ----------
 const { sendOtp } = require("../service/smsService");
 
-const IS_PROD = process.env.NODE_ENV === "production";
-
 /**
  * Sends OTP via SMS + email.
- * Dev: awaits both so devOtp can be returned to the client.
- * Prod: fires both in background and returns immediately — avoids HTTP timeouts
- *       caused by slow SMTP/BulkSMS responses holding up the request.
+ *
+ * When BULKSMS_API_TOKEN is set (i.e. real SMS delivery), both jobs are
+ * fired-and-forgotten so the HTTP response is not held up by delivery latency.
+ * When the token is absent (local dev), we await SMS so `devOtp` can be
+ * returned to the client for easy testing.
  */
 async function dispatchOtp(phone, email, otp) {
+  const hasToken = !!process.env.BULKSMS_API_TOKEN;
+
   const smsJob   = () => sendOtp(phone, otp, OTP_EXP_MIN).catch(e => console.error("[otp] SMS error:", e.message));
   const emailJob = () => email
     ? sendEmail(email, "PayFlex — Your Verification Code",
@@ -98,12 +100,14 @@ async function dispatchOtp(phone, email, otp) {
       ).catch(e => console.error("[otp] Email error:", e.message))
     : Promise.resolve();
 
-  if (!IS_PROD) {
+  if (!hasToken) {
+    // Dev: await so we can return devOtp to the client
     const smsResult = await smsJob();
-    emailJob(); // don't await email in dev either — just fire it
+    emailJob();
     return { devOtp: smsResult?.devOtp };
   }
-  // Production: fire-and-forget
+
+  // Real delivery: fire-and-forget — respond instantly, deliver in background
   smsJob();
   emailJob();
   return {};
