@@ -1099,13 +1099,12 @@ exports.forgotLoginPin = async (req, res) => {
   user.resetCodeExpires = Date.now() + 10 * 60 * 1000; // 10 min
   await user.save();
 
-  const smsResult = await sendOtp(user.phone, code, 10);
-  if (user.email) await sendEmail(user.email, "PayFlex PIN Reset", `Your PayFlex access key is ${code}. It expires in 10 minutes. Keep it private.`);
+  const { devOtp } = await dispatchOtp(user.phone, user.email, code);
 
   res.json({
     success: true,
     message: "Your access key has been sent. It may take up to 2 minutes to arrive.",
-    ...(smsResult?.devOtp && { devOtp: smsResult.devOtp }),
+    ...(devOtp && { devOtp }),
   });
 };
 
