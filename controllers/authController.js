@@ -1083,7 +1083,7 @@ exports.setTransactionPin = async (req, res) => {
 // 1. Forgot Login PIN (public)
 exports.forgotLoginPin = async (req, res) => {
   const { phone } = req.body;
-  const user = await User.findOne({ phone });
+  const user = await User.findOne({ phone: toE164(phone) });
   if (!user) return res.status(404).json({ success: false, message: "User not found" });
 
   const code = generateAlphanumericOTP();
