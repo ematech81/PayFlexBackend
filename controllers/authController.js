@@ -1104,7 +1104,7 @@ exports.forgotLoginPin = async (req, res) => {
 exports.verifyResetCode = async (req, res) => {
   const { phone, code } = req.body;
   const user = await User.findOne({
-    phone,
+    phone: toE164(phone),
     resetCode: String(code || "").trim().toUpperCase(),
     resetCodeExpires: { $gt: Date.now() },
   });
