@@ -82,6 +82,33 @@ function getLastSentFromExpiry(expires) {
 // ---------- SMS Service ----------
 const { sendOtp } = require("../service/smsService");
 
+const IS_PROD = process.env.NODE_ENV === "production";
+
+/**
+ * Sends OTP via SMS + email.
+ * Dev: awaits both so devOtp can be returned to the client.
+ * Prod: fires both in background and returns immediately — avoids HTTP timeouts
+ *       caused by slow SMTP/BulkSMS responses holding up the request.
+ */
+async function dispatchOtp(phone, email, otp) {
+  const smsJob   = () => sendOtp(phone, otp, OTP_EXP_MIN).catch(e => console.error("[otp] SMS error:", e.message));
+  const emailJob = () => email
+    ? sendEmail(email, "PayFlex — Your Verification Code",
+        `Your PayFlex access key is: ${otp}\n\nIt expires in ${OTP_EXP_MIN} minutes. Do not share it with anyone.`
+      ).catch(e => console.error("[otp] Email error:", e.message))
+    : Promise.resolve();
+
+  if (!IS_PROD) {
+    const smsResult = await smsJob();
+    emailJob(); // don't await email in dev either — just fire it
+    return { devOtp: smsResult?.devOtp };
+  }
+  // Production: fire-and-forget
+  smsJob();
+  emailJob();
+  return {};
+}
+
 /**
  * Sends a plain-text email via nodemailer (SMTP configured via env vars)
  * Falls back to console logging in development when SMTP is not configured
@@ -191,18 +218,8 @@ exports.register = async (req, res, next) => {
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
 
-    // Step 5: Send OTP via SMS + email simultaneously
-    let smsResult;
-    const smsPromise   = sendOtp(normalizedPhone, otp, OTP_EXP_MIN).then(r => { smsResult = r; }).catch(() => {});
-    const emailPromise = normalizedEmail
-      ? sendEmail(
-          normalizedEmail,
-          "PayFlex — Your Verification Code",
-          `Your PayFlex access key is: ${otp}\n\nIt expires in ${OTP_EXP_MIN} minutes. Do not share it with anyone.`
-        ).catch(() => {})
-      : Promise.resolve();
-
-    await Promise.all([smsPromise, emailPromise]);
+    // Step 5: Dispatch OTP (fire-and-forget in prod to avoid HTTP timeout)
+    const { devOtp } = await dispatchOtp(normalizedPhone, normalizedEmail, otp);
 
     return res.status(201).json({
       success: true,
@@ -210,7 +227,7 @@ exports.register = async (req, res, next) => {
       phone:            maskPhone(normalizedPhone),
       email:            normalizedEmail ? `${normalizedEmail.slice(0, 3)}***${normalizedEmail.slice(normalizedEmail.indexOf('@'))}` : undefined,
       expiresInMinutes: OTP_EXP_MIN,
-      ...(smsResult?.devOtp && { devOtp: smsResult.devOtp }),
+      ...(devOtp && { devOtp }),
     });
 
   } catch (error) {
@@ -391,25 +408,14 @@ exports.resendPhoneOtpPublic = async (req, res, next) => {
     pending.createdAt  = new Date(); // reset TTL
     await pending.save();
 
-    // Send via SMS + email
-    let smsResult;
-    const smsPromise   = sendOtp(normalizedPhone, otp, OTP_EXP_MIN).then(r => { smsResult = r; }).catch(() => {});
-    const emailPromise = pending.email
-      ? sendEmail(
-          pending.email,
-          "PayFlex — Your Verification Code",
-          `Your PayFlex access key is: ${otp}\n\nIt expires in ${OTP_EXP_MIN} minutes. Do not share it with anyone.`
-        ).catch(() => {})
-      : Promise.resolve();
-
-    await Promise.all([smsPromise, emailPromise]);
+    const { devOtp } = await dispatchOtp(normalizedPhone, pending.email, otp);
 
     return res.json({
       success: true,
       message: "Your access key has been sent via SMS and email.",
       to: maskPhone(normalizedPhone),
       expiresInMinutes: OTP_EXP_MIN,
-      ...(smsResult?.devOtp && { devOtp: smsResult.devOtp }),
+      ...(devOtp && { devOtp }),
     });
   } catch (e) {
     next(e);
@@ -518,14 +524,7 @@ exports.login = async (req, res, next) => {
       user.phoneOTPExpires = expiresAt;
       await user.save();
 
-      // Send OTP via SMS + email
-      let smsResult;
-      await Promise.all([
-        sendOtp(user.phone, otp, OTP_EXP_MIN).then(r => { smsResult = r; }).catch(() => {}),
-        user.email
-          ? sendEmail(user.email, "PayFlex — New Device Login", `Your PayFlex access key is: ${otp}\n\nIt expires in ${OTP_EXP_MIN} minutes. If this wasn't you, change your PIN immediately.`).catch(() => {})
-          : Promise.resolve(),
-      ]);
+      const { devOtp } = await dispatchOtp(user.phone, user.email, otp);
 
       return res.status(200).json({
         success: true,
@@ -533,7 +532,7 @@ exports.login = async (req, res, next) => {
         message: "New device detected. Your access key has been sent via SMS and email.",
         phone: maskPhone(user.phone),
         expiresInMinutes: OTP_EXP_MIN,
-        ...(smsResult?.devOtp && { devOtp: smsResult.devOtp }),
+        ...(devOtp && { devOtp }),
       });
     }
 
@@ -785,13 +784,7 @@ exports.resendDeviceOtp = async (req, res, next) => {
     user.phoneOTPExpires = expiresAt;
     await user.save();
 
-    let smsResult;
-    await Promise.all([
-      sendOtp(user.phone, otp, OTP_EXP_MIN).then(r => { smsResult = r; }).catch(() => {}),
-      user.email
-        ? sendEmail(user.email, "PayFlex — New Device Login", `Your PayFlex access key is: ${otp}\n\nIt expires in ${OTP_EXP_MIN} minutes. If this wasn't you, change your PIN immediately.`).catch(() => {})
-        : Promise.resolve(),
-    ]);
+    const { devOtp } = await dispatchOtp(user.phone, user.email, otp);
 
     console.log(`✅ Device OTP resent to ${maskPhone(normalizedPhone)}`);
 
@@ -799,7 +792,7 @@ exports.resendDeviceOtp = async (req, res, next) => {
       success: true,
       message: "Your access key has been sent via SMS and email.",
       expiresInMinutes: OTP_EXP_MIN,
-      ...(smsResult?.devOtp && { devOtp: smsResult.devOtp }),
+      ...(devOtp && { devOtp }),
     });
 
   } catch (error) {
