@@ -5,6 +5,7 @@ const crypto = require("crypto");
 const nodemailer = require("nodemailer");
 const { v2: cloudinary } = require("cloudinary");
 const User = require("../models/user");
+const PendingRegistration = require("../models/PendingRegistration");
 const { generateAlphanumericOTP } = require("../service/bulkSmsService");
 
 // Configure Cloudinary (reads from env at call time)
@@ -147,95 +148,76 @@ exports.register = async (req, res, next) => {
     // Step 1: Validate request body
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      return res.status(400).json({ 
-        success: false,
-        errors: errors.array() 
-      });
+      return res.status(400).json({ success: false, errors: errors.array() });
     }
 
     const { firstName, lastName, email, phone, password } = req.body;
+    const normalizedEmail = email?.toLowerCase().trim();
+    const normalizedPhone = toE164(phone);
 
-    // Step 2: Check for existing user
+    // Step 2: Check if email/phone already belong to a verified account
     const existingUser = await User.findOne({
-      $or: [
-        { email: email?.toLowerCase() },
-        { phone: toE164(phone) }
-      ],
+      $or: [{ email: normalizedEmail }, { phone: normalizedPhone }],
     });
-
     if (existingUser) {
-      const field = existingUser.email === email?.toLowerCase() ? "Email" : "Phone number";
-      return res.status(409).json({ 
+      const field = existingUser.email === normalizedEmail ? "Email" : "Phone number";
+      return res.status(409).json({
         success: false,
-        message: `${field} already registered. Please login instead.`
+        message: `${field} already registered. Please login instead.`,
       });
     }
 
-    // Step 3: Hash password
+    // Step 3: Hash password and generate OTP
     const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
-
-    // Step 4: Create new user
-    const user = await User.create({
-      firstName: firstName.trim(),
-      lastName: lastName.trim(),
-      email: email?.toLowerCase().trim(),
-      phone: toE164(phone),
-      passwordHash,
-      isEmailVerified: false,
-      isPhoneVerified: false,
-      devices: [],
-      walletBalance: 0,
-      kyc: "pending",
-      roles: ["user"],
-      isActive: true,
-    });
-
-    // Step 5: Generate OTP
-    const otp = generateOtp();
-    const otpHash = await bcrypt.hash(otp, 10);
+    const otp      = generateOtp();
+    const otpHash  = await bcrypt.hash(otp, 10);
     const expiresAt = new Date(Date.now() + OTP_EXP_MIN * 60 * 1000);
 
-    // Step 6: Store hashed OTP and expiry
-    user.phoneOTP = otpHash;
-    user.phoneOTPExpires = expiresAt;
-    await user.save();
+    // Step 4: Upsert PendingRegistration — no real User created yet.
+    // If the same phone/email tries again (e.g. OTP not received), we refresh
+    // the OTP so they can re-attempt without being permanently blocked.
+    await PendingRegistration.findOneAndUpdate(
+      { $or: [{ email: normalizedEmail }, { phone: normalizedPhone }] },
+      {
+        firstName: firstName.trim(),
+        lastName:  lastName.trim(),
+        email:     normalizedEmail,
+        phone:     normalizedPhone,
+        passwordHash,
+        otpHash,
+        otpExpires: expiresAt,
+        createdAt:  new Date(), // reset TTL on re-attempt
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
 
-    // Step 7: Send OTP via SMS
+    // Step 5: Send OTP via SMS + email simultaneously
     let smsResult;
-    try {
-      smsResult = await sendOtp(user.phone, otp, OTP_EXP_MIN);
-    } catch (smsError) {
-      // If SMS fails, delete the user to maintain data integrity
-      await User.findByIdAndDelete(user._id);
-      return res.status(500).json({
-        success: false,
-        message: "Failed to send verification code. Please try again.",
-      });
-    }
+    const smsPromise   = sendOtp(normalizedPhone, otp, OTP_EXP_MIN).then(r => { smsResult = r; }).catch(() => {});
+    const emailPromise = normalizedEmail
+      ? sendEmail(
+          normalizedEmail,
+          "PayFlex — Your Verification Code",
+          `Your PayFlex access key is: ${otp}\n\nIt expires in ${OTP_EXP_MIN} minutes. Do not share it with anyone.`
+        ).catch(() => {})
+      : Promise.resolve();
 
-    // Step 8: Return success response
+    await Promise.all([smsPromise, emailPromise]);
+
     return res.status(201).json({
       success: true,
-      message: "Registration successful. Your access key has been sent. It may take up to 2 minutes to arrive.",
-      userId: user._id,
-      phone: maskPhone(user.phone),
+      message: "Registration started. Your access key has been sent via SMS and email.",
+      phone:            maskPhone(normalizedPhone),
+      email:            normalizedEmail ? `${normalizedEmail.slice(0, 3)}***${normalizedEmail.slice(normalizedEmail.indexOf('@'))}` : undefined,
       expiresInMinutes: OTP_EXP_MIN,
       ...(smsResult?.devOtp && { devOtp: smsResult.devOtp }),
     });
 
   } catch (error) {
     console.error("❌ Registration error:", error);
-    
-    // Handle specific MongoDB errors
     if (error.code === 11000) {
-      const field = Object.keys(error.keyPattern)[0];
-      return res.status(409).json({
-        success: false,
-        message: `${field} already exists`,
-      });
+      return res.status(409).json({ success: false, message: "Email or phone already in use." });
     }
-
-    // Pass to error handling middleware
     next(error);
   }
 };
@@ -273,68 +255,33 @@ exports.register = async (req, res, next) => {
  */
 exports.verifyPhoneOtpPublic = async (req, res, next) => {
   try {
-    // Step 1: Validate input
-    const { phone, otp, deviceId } = req.body; // Accept deviceId from frontend
+    const { phone, otp, deviceId } = req.body;
 
     if (!phone || !otp) {
-      return res.status(400).json({
-        success: false,
-        message: "Phone number and OTP are required",
-      });
+      return res.status(400).json({ success: false, message: "Phone number and OTP are required" });
     }
-
-    // Validate OTP format (6-character access key)
     if (!/^[A-Z0-9]{6}$/i.test(otp.trim())) {
-      return res.status(400).json({
-        success: false,
-        message: "Access key must be exactly 6 characters",
-      });
+      return res.status(400).json({ success: false, message: "Access key must be exactly 6 characters" });
     }
 
-    // Step 2: Normalize phone to E.164 format
     const normalizedPhone = toE164(phone);
-
     console.log(`📱 Verifying phone OTP for: ${maskPhone(normalizedPhone)}`);
 
-    // Step 3: Find user by phone (include OTP fields and devices for verification)
-    const user = await User.findOne({ phone: normalizedPhone })
-      .select("+phoneOTP +phoneOTPExpires +devices");
+    // Look up the pending registration — real User does NOT exist yet
+    const pending = await PendingRegistration.findOne({ phone: normalizedPhone })
+      .select('+passwordHash +otpHash');
 
-    if (!user) {
-      console.log(`❌ User not found for phone: ${maskPhone(normalizedPhone)}`);
-      return res.status(404).json({
-        success: false,
-        message: "User not found. Please register first.",
-      });
+    if (!pending) {
+      // Could be a re-use after successful verification (user already exists)
+      const alreadyVerified = await User.exists({ phone: normalizedPhone, isPhoneVerified: true });
+      if (alreadyVerified) {
+        return res.status(400).json({ success: false, message: "Phone already verified. Please login.", alreadyVerified: true });
+      }
+      return res.status(404).json({ success: false, message: "No pending registration found. Please register first." });
     }
 
-    // Step 4: Check if phone is already verified
-    if (user.isPhoneVerified) {
-      return res.status(400).json({
-        success: false,
-        message: "Phone number already verified. Please login.",
-        alreadyVerified: true,
-      });
-    }
-
-    // Step 5: Check if OTP exists
-    if (!user.phoneOTP || !user.phoneOTPExpires) {
-      return res.status(400).json({
-        success: false,
-        message: "No verification code found. Please request a new one.",
-        shouldResend: true,
-      });
-    }
-
-    // Step 6: Check if OTP is expired
-    const now = Date.now();
-    const expiryTime = new Date(user.phoneOTPExpires).getTime();
-
-    if (now > expiryTime) {
-      const expiredMinutes = Math.floor((now - expiryTime) / 60000);
-      
-      console.log(`⏰ OTP expired ${expiredMinutes} minutes ago for ${maskPhone(normalizedPhone)}`);
-      
+    // Check expiry
+    if (Date.now() > new Date(pending.otpExpires).getTime()) {
       return res.status(400).json({
         success: false,
         message: "Verification code expired. Please request a new one.",
@@ -343,86 +290,61 @@ exports.verifyPhoneOtpPublic = async (req, res, next) => {
       });
     }
 
-    // Step 7: Verify OTP
-    const isValidOTP = await bcrypt.compare(String(otp.trim()).toUpperCase(), user.phoneOTP);
-
+    // Verify OTP
+    const isValidOTP = await bcrypt.compare(String(otp.trim()).toUpperCase(), pending.otpHash);
     if (!isValidOTP) {
       console.log(`❌ Invalid OTP attempt for ${maskPhone(normalizedPhone)}`);
-      
-      return res.status(400).json({
-        success: false,
-        message: "Invalid verification code. Please try again.",
-      });
+      return res.status(400).json({ success: false, message: "Invalid verification code. Please try again." });
     }
 
-    // Step 8: Mark phone as verified and clear OTP
-    user.isPhoneVerified = true;
-    user.phoneOTP = undefined;
-    user.phoneOTPExpires = undefined;
-    user.lastLogin = new Date();
+    // OTP is correct — now create the real User
+    const devices = deviceId ? [deviceId.trim().toLowerCase()] : [];
+    const user = await User.create({
+      firstName:       pending.firstName,
+      lastName:        pending.lastName,
+      email:           pending.email,
+      phone:           pending.phone,
+      passwordHash:    pending.passwordHash,
+      isEmailVerified: false,
+      isPhoneVerified: true,
+      devices,
+      walletBalance:   0,
+      kyc:             "pending",
+      roles:           ["user"],
+      isActive:        true,
+      lastLogin:       new Date(),
+    });
 
-    // Step 9: ✅ ADD DEVICE TO TRUSTED DEVICES (NEW FIX)
-    if (deviceId) {
-      const normalizedDeviceId = deviceId.trim().toLowerCase();
-      
-      // Initialize devices array if it doesn't exist
-      if (!user.devices) {
-        user.devices = [];
-      }
+    // Clean up pending record
+    await PendingRegistration.findByIdAndDelete(pending._id).catch(() => {});
 
-      // Only add if not already in list (case-insensitive check)
-      const deviceExists = user.devices
-        .map(d => d.toLowerCase())
-        .includes(normalizedDeviceId);
+    console.log(`✅ Phone verified & user created for ${maskPhone(normalizedPhone)}`);
 
-      if (!deviceExists) {
-        user.devices.push(normalizedDeviceId);
-        console.log(`✅ Device added during phone verification for ${maskPhone(normalizedPhone)}`);
-      } else {
-        console.log(`ℹ️  Device already in list for ${maskPhone(normalizedPhone)}`);
-      }
-    } else {
-      console.log(`⚠️  No deviceId provided during phone verification for ${maskPhone(normalizedPhone)}`);
-    }
-    
-    await user.save();
-
-    console.log(`✅ Phone verified successfully for ${maskPhone(normalizedPhone)}`);
-
-    // Step 10: Generate JWT token
     const token = signToken(user);
 
-    // Step 11: Return success response
     return res.status(200).json({
       success: true,
       message: "Phone verified successfully",
       token,
       user: {
-        id: user._id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-        phone: maskPhone(user.phone),
+        id:              user._id,
+        firstName:       user.firstName,
+        lastName:        user.lastName,
+        email:           user.email,
+        phone:           maskPhone(user.phone),
         isPhoneVerified: user.isPhoneVerified,
-        kyc: user.kyc,
-        walletBalance: user.walletBalance,
-        roles: user.roles,
+        kyc:             user.kyc,
+        walletBalance:   user.walletBalance,
+        roles:           user.roles,
         requirePinOnOpen: user.requirePinOnOpen,
       },
     });
 
   } catch (error) {
     console.error("❌ Phone OTP verification error:", error);
-
-    // Handle specific MongoDB errors
     if (error.name === "CastError") {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid phone number format",
-      });
+      return res.status(400).json({ success: false, message: "Invalid phone number format" });
     }
-
-    // Pass to error handling middleware
     next(error);
   }
 };
@@ -437,44 +359,55 @@ exports.verifyPhoneOtpPublic = async (req, res, next) => {
  */
 exports.resendPhoneOtpPublic = async (req, res, next) => {
   try {
-    const { userId } = req.body;
-    if (!userId) return res.status(400).json({ message: "userId is required" });
+    const { phone } = req.body;
+    if (!phone) return res.status(400).json({ success: false, message: "phone is required" });
 
-    const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ message: "User not found" });
-    if (!user.phone)
-      return res.status(400).json({ message: "No phone on file" });
-    if (user.isPhoneVerified)
-      return res.status(400).json({ message: "Phone already verified" });
+    const normalizedPhone = toE164(phone);
+
+    const pending = await PendingRegistration.findOne({ phone: normalizedPhone })
+      .select('+otpHash');
+
+    if (!pending) {
+      const alreadyVerified = await User.exists({ phone: normalizedPhone, isPhoneVerified: true });
+      if (alreadyVerified) {
+        return res.status(400).json({ success: false, message: "Phone already verified. Please login." });
+      }
+      return res.status(404).json({ success: false, message: "No pending registration. Please register first." });
+    }
 
     // Throttle resend
-    if (user.phoneOTPExpires) {
-      const lastSent = getLastSentFromExpiry(user.phoneOTPExpires);
-      if (
-        lastSent &&
-        Date.now() - lastSent.getTime() < RESEND_COOLDOWN_SEC * 1000
-      ) {
-        const wait = Math.ceil(
-          (RESEND_COOLDOWN_SEC * 1000 - (Date.now() - lastSent.getTime())) /
-            1000
-        );
-        return res.status(429).json({
-          message: `Please wait ${wait}s before requesting another code`,
-        });
+    if (pending.otpExpires) {
+      const lastSent = getLastSentFromExpiry(pending.otpExpires);
+      if (lastSent && Date.now() - lastSent.getTime() < RESEND_COOLDOWN_SEC * 1000) {
+        const wait = Math.ceil((RESEND_COOLDOWN_SEC * 1000 - (Date.now() - lastSent.getTime())) / 1000);
+        return res.status(429).json({ success: false, message: `Please wait ${wait}s before requesting another code` });
       }
     }
 
     // New OTP
     const otp = generateOtp();
-    user.phoneOTP = await bcrypt.hash(otp, 10);
-    user.phoneOTPExpires = new Date(Date.now() + OTP_EXP_MIN * 60 * 1000);
-    await user.save();
+    pending.otpHash    = await bcrypt.hash(otp, 10);
+    pending.otpExpires = new Date(Date.now() + OTP_EXP_MIN * 60 * 1000);
+    pending.createdAt  = new Date(); // reset TTL
+    await pending.save();
 
-    const smsResult = await sendOtp(user.phone, otp, OTP_EXP_MIN);
+    // Send via SMS + email
+    let smsResult;
+    const smsPromise   = sendOtp(normalizedPhone, otp, OTP_EXP_MIN).then(r => { smsResult = r; }).catch(() => {});
+    const emailPromise = pending.email
+      ? sendEmail(
+          pending.email,
+          "PayFlex — Your Verification Code",
+          `Your PayFlex access key is: ${otp}\n\nIt expires in ${OTP_EXP_MIN} minutes. Do not share it with anyone.`
+        ).catch(() => {})
+      : Promise.resolve();
 
-    res.json({
-      message: "Your access key has been sent. It may take up to 2 minutes to arrive.",
-      to: maskPhone(user.phone),
+    await Promise.all([smsPromise, emailPromise]);
+
+    return res.json({
+      success: true,
+      message: "Your access key has been sent via SMS and email.",
+      to: maskPhone(normalizedPhone),
       expiresInMinutes: OTP_EXP_MIN,
       ...(smsResult?.devOtp && { devOtp: smsResult.devOtp }),
     });
@@ -585,13 +518,19 @@ exports.login = async (req, res, next) => {
       user.phoneOTPExpires = expiresAt;
       await user.save();
 
-      // Send OTP via SMS
-      const smsResult = await sendOtp(user.phone, otp, OTP_EXP_MIN);
+      // Send OTP via SMS + email
+      let smsResult;
+      await Promise.all([
+        sendOtp(user.phone, otp, OTP_EXP_MIN).then(r => { smsResult = r; }).catch(() => {}),
+        user.email
+          ? sendEmail(user.email, "PayFlex — New Device Login", `Your PayFlex access key is: ${otp}\n\nIt expires in ${OTP_EXP_MIN} minutes. If this wasn't you, change your PIN immediately.`).catch(() => {})
+          : Promise.resolve(),
+      ]);
 
       return res.status(200).json({
         success: true,
         isNewDevice: true,
-        message: "New device detected. Your access key has been sent. It may take up to 2 minutes to arrive.",
+        message: "New device detected. Your access key has been sent via SMS and email.",
         phone: maskPhone(user.phone),
         expiresInMinutes: OTP_EXP_MIN,
         ...(smsResult?.devOtp && { devOtp: smsResult.devOtp }),
@@ -846,13 +785,19 @@ exports.resendDeviceOtp = async (req, res, next) => {
     user.phoneOTPExpires = expiresAt;
     await user.save();
 
-    const smsResult = await sendOtp(user.phone, otp, OTP_EXP_MIN);
+    let smsResult;
+    await Promise.all([
+      sendOtp(user.phone, otp, OTP_EXP_MIN).then(r => { smsResult = r; }).catch(() => {}),
+      user.email
+        ? sendEmail(user.email, "PayFlex — New Device Login", `Your PayFlex access key is: ${otp}\n\nIt expires in ${OTP_EXP_MIN} minutes. If this wasn't you, change your PIN immediately.`).catch(() => {})
+        : Promise.resolve(),
+    ]);
 
     console.log(`✅ Device OTP resent to ${maskPhone(normalizedPhone)}`);
 
     return res.status(200).json({
       success: true,
-      message: "Your access key has been sent. It may take up to 2 minutes to arrive.",
+      message: "Your access key has been sent via SMS and email.",
       expiresInMinutes: OTP_EXP_MIN,
       ...(smsResult?.devOtp && { devOtp: smsResult.devOtp }),
     });

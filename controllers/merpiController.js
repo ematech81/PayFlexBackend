@@ -134,7 +134,7 @@ async function buyTicket({ req, res, type, merpiPath, extraValidate }) {
     return res.json({
       success:   true,
       reference,
-      booking:   data,
+      booking:   data?.data ?? data,
       newBalance: user.walletBalance,
     });
 

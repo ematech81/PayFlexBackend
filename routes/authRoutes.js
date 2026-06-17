@@ -94,14 +94,12 @@ router.post(
       .withMessage("Phone number is required")
       .matches(/^(\+?234|0)[789]\d{9}$/)
       .withMessage("Please enter a valid Nigerian phone number"),
-    
     body("otp")
       .trim()
       .notEmpty()
       .withMessage("OTP is required")
-      .matches(/^\d{6}$/)
-      .withMessage("OTP must be exactly 6 digits"),
-    
+      .matches(/^[A-Z0-9]{6}$/i)
+      .withMessage("Access key must be exactly 6 characters"),
     body("deviceId")
       .optional()
       .isString()
@@ -112,8 +110,6 @@ router.post(
   verifyPhoneOtpPublic
 );
 
-
-
 router.post(
   "/phone/resend-otp",
   [
@@ -123,13 +119,6 @@ router.post(
       .withMessage("Phone number is required")
       .matches(/^(\+?234|0)[789]\d{9}$/)
       .withMessage("Please enter a valid Nigerian phone number"),
-    
-    body("otp")
-      .trim()
-      .notEmpty()
-      .withMessage("OTP is required")
-      .matches(/^\d{6}$/)
-      .withMessage("OTP must be exactly 6 digits"),
   ],
   validate,
   resendPhoneOtpPublic
@@ -182,9 +171,8 @@ router.post(
       .trim()
       .notEmpty()
       .withMessage("OTP is required")
-      .matches(/^\d{6}$/)
-      .withMessage("OTP must be exactly 6 digits"),
-    
+      .matches(/^[A-Z0-9]{6}$/i)
+      .withMessage("Access key must be exactly 6 characters"),
     body("deviceId")
       .trim()
       .notEmpty()
