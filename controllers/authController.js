@@ -1086,8 +1086,14 @@ exports.forgotLoginPin = async (req, res) => {
   const normalized = toE164(phone);
   console.log(`[forgotPin] raw="${phone}" normalized="${normalized}"`);
   const user = await User.findOne({ phone: normalized });
-  console.log(`[forgotPin] user found: ${!!user}`);
-  if (!user) return res.status(404).json({ success: false, message: "User not found" });
+  if (!user) {
+    // Debug: find any user whose phone ends with the last 8 digits
+    const suffix = normalized.slice(-8);
+    const nearby = await User.findOne({ phone: { $regex: suffix + '$' } }).select('phone');
+    console.log(`[forgotPin] no exact match. Nearby phone in DB: ${nearby?.phone ?? 'none'}`);
+    return res.status(404).json({ success: false, message: "User not found" });
+  }
+  console.log(`[forgotPin] user found: ${user.phone}`);
 
   const code = generateAlphanumericOTP();
   user.resetCode = code;
