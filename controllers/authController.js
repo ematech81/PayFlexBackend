@@ -119,31 +119,40 @@ async function dispatchOtp(phone, email, otp) {
  */
 async function sendEmail(to, subject, text) {
   if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) {
-    console.log(`⚠️  [DEV MODE] SMTP not configured`);
-    console.log(`📧 To: ${to}`);
-    console.log(`📌 Subject: ${subject}`);
-    console.log(`📝 Body: ${text}`);
+    console.log(`⚠️  [EMAIL] SMTP not configured — skipping email to ${to}`);
     return;
   }
 
+  const host   = process.env.SMTP_HOST;
+  const port   = Number(process.env.SMTP_PORT) || 587;
+  const secure = process.env.SMTP_SECURE === "true";
+
+  console.log(`📧 [EMAIL] Attempting to send to ${to} via ${host}:${port}`);
+
   const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT) || 587,
-    secure: process.env.SMTP_SECURE === "true",
+    host,
+    port,
+    secure,
     auth: {
       user: process.env.SMTP_USER,
       pass: process.env.SMTP_PASS,
     },
+    tls: {
+      rejectUnauthorized: false, // tolerate self-signed certs on cloud servers
+    },
+    connectionTimeout: 10000, // 10s to establish connection
+    greetingTimeout:   10000,
+    socketTimeout:     15000,
   });
 
-  await transporter.sendMail({
+  const info = await transporter.sendMail({
     from: `"PayFlex" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
     to,
     subject,
     text,
   });
 
-  console.log(`✅ Email sent to ${to}`);
+  console.log(`✅ [EMAIL] Sent to ${to} — messageId: ${info.messageId}`);
 }
 
 // ---------- Main Controller ----------
