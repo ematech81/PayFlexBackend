@@ -3,7 +3,9 @@
 /**
  * CAC VAS Service Layer
  *
- * All calls go to https://vasapp.oasisproducts.ng via Axios.
+ * Base URL is set via CAC_VAS_BASE_URL env var.
+ *   Sandbox:    https://vasapp.oasisproducts.ng  (default)
+ *   Production: https://vasapp.cac.gov.ng
  * Authentication: X_API_KEY header (never logged in plaintext).
  * Auto-retries on 5xx / network errors — 3 attempts, exponential backoff (1s, 2s).
  *
