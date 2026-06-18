@@ -16,7 +16,7 @@
 const axios = require('axios');
 
 const BASE_URL   = process.env.CAC_VAS_BASE_URL || 'https://vasapp.oasisproducts.ng';
-const TIMEOUT_MS = 30_000;
+const TIMEOUT_MS = 90_000;
 const MAX_RETRIES = 3;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
