@@ -90,10 +90,8 @@ const validateName = async (req, res) => {
   }
 
   try {
-    const transactionRef = `CACVAL${Date.now()}`;
     const vasResult = await cacVasService.validateBusinessName({
       proposedName: String(proposedName).trim(),
-      transactionRef,
     });
     return res.json({ success: true, data: vasResult });
   } catch (err) {

@@ -140,13 +140,14 @@ async function _get(path) {
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
- * BN Pre-Registration Validation — free name availability check.
- * Always call before charging the user.
+ * Quick name availability / compliance check (no full payload needed).
+ * Uses the BN compliance endpoint, same as bnCompliance().
+ * advanceCheck is a query parameter per VAS docs.
  */
-async function validateBusinessName({ proposedName, transactionRef }) {
-  return _post('/api/vas/engine/pre/bn/validation', {
-    proposedOption1: proposedName,
-    transactionRef:  transactionRef || `VAS${Date.now()}`,
+async function validateBusinessName({ proposedName, lineOfBusiness }) {
+  return _post('/api/vas/engine/pre/bn-compliance?advanceCheck=true', {
+    proposedName,
+    lineOfBusiness: lineOfBusiness || '',
   });
 }
 
@@ -239,16 +240,15 @@ async function generateTIN({ rcNumber }) {
 }
 
 /**
- * BN Compliance pre-check (advanceCheck=true).
+ * BN Compliance pre-check.
+ * advanceCheck is a query parameter per VAS docs.
  * Free — no wallet deduction.
  * Returns statusCode, message, recommendedActions, suggestedNames, similarNames.
  */
 async function bnCompliance({ proposedName, lineOfBusiness }) {
-  // advanceCheck sent as body field — docs say "request parameter" which for POST = body
-  return _post('/api/vas/engine/pre/bn-compliance', {
+  return _post('/api/vas/engine/pre/bn-compliance?advanceCheck=true', {
     proposedName,
     lineOfBusiness: lineOfBusiness || '',
-    advanceCheck:  true,
   });
 }
 
