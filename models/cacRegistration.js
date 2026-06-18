@@ -40,6 +40,10 @@ const cacRegistrationSchema = new mongoose.Schema(
       default: 'pending',
       index: true,
     },
+    // transactionRef returned by VAS API on submission (VAS20240613... format)
+    // used for polling /api/vas/portal/user/status/{vasTransactionRef}
+    vasTransactionRef: { type: String, index: true },
+
     // Populated by webhook after CAC approval
     rcNumber:       { type: String },
     tin:            { type: String },

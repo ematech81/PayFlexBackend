@@ -199,8 +199,9 @@ const registerBusinessName = async (req, res) => {
       transactionRef,
     });
 
+    const vasTransactionRef = vasResult?.data?.transactionRef || vasResult?.transactionRef || null;
     await Promise.all([
-      CACRegistration.findByIdAndUpdate(regDoc._id, { response: vasResult }),
+      CACRegistration.findByIdAndUpdate(regDoc._id, { response: vasResult, ...(vasTransactionRef && { vasTransactionRef }) }),
       Transaction.findByIdAndUpdate(txDoc._id, { status: 'processing', response: vasResult }),
     ]);
 
@@ -239,10 +240,13 @@ const getRegistrationStatus = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Access denied.' });
     }
 
-    // Reconciliation poll — if still pending, ask VAS for current status
+    // Reconciliation poll — if still pending, ask VAS for current status.
+    // VAS generates its own ref (VAS...) returned at submission time; fall
+    // back to our internal ref only if it was never stored (old records).
     if (reg.status === 'pending') {
       try {
-        const vasStatus = await cacVasService.checkRegistrationStatus({ transactionRef });
+        const vasRef = reg.vasTransactionRef || transactionRef;
+        const vasStatus = await cacVasService.checkRegistrationStatus({ transactionRef: vasRef });
         return res.json({ success: true, registration: reg, vasStatus });
       } catch {
         // VAS poll failure is non-fatal — return DB state
@@ -287,9 +291,11 @@ const resubmitRegistration = async (req, res) => {
       transactionRef,
     });
 
+    const vasTransactionRef = vasResult?.data?.transactionRef || vasResult?.transactionRef || null;
     reg.registrationData = registrationData;
     reg.status           = 'pending';
-    reg.webhookReceived  = false; // reset so next webhook is processed
+    reg.webhookReceived  = false;
+    if (vasTransactionRef) reg.vasTransactionRef = vasTransactionRef;
     await reg.save();
 
     return res.json({ success: true, message: 'Resubmission successful. Awaiting CAC review.', transactionRef, vasStatus: vasResult });
