@@ -54,21 +54,28 @@ async function _post(path, body = {}) {
     } catch (err) {
       const httpStatus  = err.response?.status;
       const isRetryable = !httpStatus || httpStatus >= 500;
+      const rawBody     = err.response?.data;
       console.warn(
-        `[CAC LLC VAS] POST failed (attempt ${attempt}/${MAX_RETRIES}):`,
-        _redactKey(err.message),
-        httpStatus ? `HTTP ${httpStatus}` : '(no response)'
+        `[CAC LLC VAS] POST failed (attempt ${attempt}/${MAX_RETRIES}): HTTP ${httpStatus ?? '(no response)'}`,
+        _redactKey(err.message)
       );
+      if (rawBody) {
+        console.warn('[CAC LLC VAS] Response body:', JSON.stringify(rawBody).substring(0, 500));
+      }
       lastErr = err;
       if (!isRetryable || attempt === MAX_RETRIES) break;
       await _sleep(attempt * 1_000);
     }
   }
 
-  const message = lastErr?.response?.data?.message || lastErr?.message || 'CAC LLC VAS request failed';
+  const raw     = lastErr?.response?.data;
+  const message = raw?.message || raw?.error || raw?.description
+    || (typeof raw === 'string' && raw.length < 200 ? raw : null)
+    || lastErr?.message
+    || 'CAC LLC VAS request failed';
   const error   = new Error(_redactKey(message));
   error.statusCode = lastErr?.response?.status || 503;
-  error.vasRaw     = lastErr?.response?.data ?? null;
+  error.vasRaw     = raw ?? null;
   throw error;
 }
 

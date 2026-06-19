@@ -76,7 +76,7 @@ const nameReservation = async (req, res) => {
       proposedName:    session.proposedName,
     });
   } catch (err) {
-    console.error('[cac-llc] nameReservation error:', err.message);
+    console.error('[cac-llc] nameReservation error:', err.message, err.vasRaw ? JSON.stringify(err.vasRaw).substring(0, 300) : '');
     return res.status(err.statusCode || 502).json({ success: false, message: err.message });
   }
 };
