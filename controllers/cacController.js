@@ -238,14 +238,26 @@ const getRegistrationStatus = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Access denied.' });
     }
 
-    // Reconciliation poll — if still pending, ask VAS for current status.
+    // Poll VAS for any non-terminal status and sync result back to DB.
     // VAS generates its own ref (VAS...) returned at submission time; fall
     // back to our internal ref only if it was never stored (old records).
-    if (reg.status === 'pending') {
+    const TERMINAL = ['approved', 'failed', 'cancelled'];
+    if (!TERMINAL.includes(reg.status)) {
       try {
-        const vasRef = reg.vasTransactionRef || transactionRef;
-        const vasStatus = await cacVasService.checkRegistrationStatus({ transactionRef: vasRef });
-        return res.json({ success: true, registration: reg, vasStatus });
+        const vasRef    = reg.vasTransactionRef || transactionRef;
+        const vasResult = await cacVasService.checkRegistrationStatus({ transactionRef: vasRef });
+        const vasData   = vasResult?.data || vasResult;
+        const vasStatus = vasData?.status;
+        const vasQueries = Array.isArray(vasData?.data) ? vasData.data : [];
+
+        // Persist any status or query update so future loads reflect live VAS state
+        const updates = {};
+        if (vasStatus && vasStatus !== reg.status)   updates.status  = vasStatus;
+        if (vasQueries.length > 0)                   updates.queries = vasQueries;
+        if (Object.keys(updates).length > 0) {
+          await CACRegistration.findByIdAndUpdate(reg._id, updates);
+          Object.assign(reg, updates); // reflect in this response too
+        }
       } catch {
         // VAS poll failure is non-fatal — return DB state
       }
