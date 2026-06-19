@@ -379,9 +379,14 @@ const downloadCertificate = async (req, res) => {
       }
 
       try {
-        const vasResult = await cacVasService.downloadCertificate({ transactionRef });
-        await Transaction.findByIdAndUpdate(txDoc._id, { status: 'success', response: vasResult }).catch(() => {});
-        return res.json({ success: true, data: vasResult });
+        // VAS needs the VAS-generated ref (VAS...), not our internal CACREG... ref
+        const vasRef    = reg.vasTransactionRef || transactionRef;
+        const vasResult = await cacVasService.downloadCertificate({ transactionRef: vasRef });
+        await Transaction.findByIdAndUpdate(txDoc._id, { status: 'success' }).catch(() => {});
+        const safeName = (reg.registrationData?.proposedOption1 || transactionRef).replace(/[^a-zA-Z0-9-_]/g, '_');
+        res.set('Content-Type', vasResult.contentType);
+        res.set('Content-Disposition', `attachment; filename="CAC-Certificate-${safeName}.pdf"`);
+        return res.send(vasResult.buffer);
       } catch (vasErr) {
         await refundWalletBalance(user, pricing.userPays).catch(() => {});
         await Transaction.findByIdAndUpdate(txDoc._id, { status: 'failed', failureReason: vasErr.message }).catch(() => {});
@@ -390,8 +395,12 @@ const downloadCertificate = async (req, res) => {
     }
 
     // pricing.userPays === 0 (free tier / future change)
-    const vasResult = await cacVasService.downloadCertificate({ transactionRef });
-    return res.json({ success: true, data: vasResult });
+    const vasRef    = reg.vasTransactionRef || transactionRef;
+    const vasResult = await cacVasService.downloadCertificate({ transactionRef: vasRef });
+    const safeName  = (reg.registrationData?.proposedOption1 || transactionRef).replace(/[^a-zA-Z0-9-_]/g, '_');
+    res.set('Content-Type', vasResult.contentType);
+    res.set('Content-Disposition', `attachment; filename="CAC-Certificate-${safeName}.pdf"`);
+    return res.send(vasResult.buffer);
 
   } catch (err) {
     console.error('[cac] downloadCertificate error:', err.message);

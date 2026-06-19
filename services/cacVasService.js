@@ -175,9 +175,37 @@ async function checkRegistrationStatus({ transactionRef }) {
 
 /**
  * Download CAC certificate after approval.
+ * VAS returns a binary PDF blob — use responseType arraybuffer.
+ * Accepts vasTransactionRef (VAS...) or rcNumber.
+ * Returns { buffer: Buffer, contentType: string }.
  */
-async function downloadCertificate({ transactionRef }) {
-  return _post('/api/vas/engine/pre/certificate', { transactionRef });
+async function downloadCertificate({ transactionRef, rcNumber }) {
+  const key  = _getKey();
+  const url  = `${BASE_URL}/api/vas/engine/certificate`;
+  const body = rcNumber ? { rcNumber } : { transactionRef };
+
+  console.log(`[CAC VAS] → POST ${url} (certificate download)`);
+  try {
+    const { data, headers } = await axios.post(url, body, {
+      headers:      { 'Content-Type': 'application/json', 'X_API_KEY': key },
+      responseType: 'arraybuffer',
+      timeout:      TIMEOUT_MS,
+    });
+    console.log('[CAC VAS] ← certificate blob received, size:', data?.byteLength);
+    return {
+      buffer:      Buffer.from(data),
+      contentType: headers['content-type'] || 'application/pdf',
+    };
+  } catch (err) {
+    const httpStatus = err.response?.status;
+    console.error('[CAC VAS] certificate download failed:', _redactKey(err.message), httpStatus ? `HTTP ${httpStatus}` : '');
+    const message = err.response?.data
+      ? Buffer.from(err.response.data).toString('utf8').substring(0, 200)
+      : err.message;
+    const error = new Error(_redactKey(message));
+    error.statusCode = httpStatus || 503;
+    throw error;
+  }
 }
 
 /**
