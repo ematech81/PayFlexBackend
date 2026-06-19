@@ -41,4 +41,25 @@ router.post('/registration/:transactionRef/certificate', protect, verifyPin, dow
 // ── Business validation / search ──────────────────────────────────────────────
 router.post('/search', protect, verifyPin, searchBusiness);
 
+// ── LLC Registration (Steps 1–6) ──────────────────────────────────────────────
+const {
+  nameReservation,
+  generateMemoObjects,
+  analyseMemoObjects,
+  createCompany,
+  registerShares,
+  registerAffiliate,
+  getLlcSession,
+  getLlcHistory,
+} = require('../controllers/cacLlcController');
+
+router.post('/llc/name-reservation',        protect, nameReservation);
+router.post('/llc/memorandum/generate',     protect, generateMemoObjects);
+router.post('/llc/memorandum/analyse',      protect, analyseMemoObjects);
+router.post('/llc/company',                 protect, createCompany);
+router.post('/llc/shares',                  protect, registerShares);
+router.post('/llc/affiliate',               protect, registerAffiliate);
+router.get('/llc/registration/:sessionId',  protect, getLlcSession);
+router.get('/llc/history',                  protect, getLlcHistory);
+
 module.exports = router;

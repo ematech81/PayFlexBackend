@@ -51,11 +51,12 @@ const startServer = async () => {
     app.use('/api/webhooks/korapay',    express.raw({ type: '*/*' }));
     app.use('/api/cac/webhook',         express.raw({ type: '*/*' }));
 
-    // CAC registration and validation routes carry up to 6 base64 images (~8 MB);
-    // register a larger parser first so it takes precedence for those paths.
+    // CAC registration, validation, and LLC affiliate routes carry base64 images
+    // (~8 MB); register larger parsers first so they take precedence.
     app.use('/api/cac/register',    express.json({ limit: '25mb' }));
     app.use('/api/cac/registration',express.json({ limit: '25mb' }));
     app.use('/api/cac/validate',    express.json({ limit: '25mb' }));
+    app.use('/api/cac/llc',         express.json({ limit: '25mb' }));
     app.use(express.json({ limit: "2mb" }));
 
     const allowedOrigins = process.env.ALLOWED_ORIGINS
