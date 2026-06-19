@@ -11,6 +11,7 @@ const {
   getRegistrationStatus,
   resubmitRegistration,
   downloadCertificate,
+  downloadStatusReport,
   searchBusiness,
   getHistory,
   registerLLC,
@@ -36,7 +37,8 @@ router.post('/register/llc',           protect, registerLLC);
 // ── Per-registration actions ──────────────────────────────────────────────────
 router.get('/registration/:transactionRef',                         protect, getRegistrationStatus);
 router.post('/registration/:transactionRef/resubmit',              protect, resubmitRegistration);
-router.post('/registration/:transactionRef/certificate', protect, verifyPin, downloadCertificate);
+router.post('/registration/:transactionRef/certificate',    protect, verifyPin, downloadCertificate);
+router.post('/registration/:transactionRef/status-report', protect, downloadStatusReport);
 
 // ── Business validation / search ──────────────────────────────────────────────
 router.post('/search', protect, verifyPin, searchBusiness);

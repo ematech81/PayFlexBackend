@@ -209,6 +209,40 @@ async function downloadCertificate({ transactionRef, rcNumber }) {
 }
 
 /**
+ * Download CAC status report after approval.
+ * Identical blob pattern to downloadCertificate — different VAS endpoint.
+ * Returns { buffer: Buffer, contentType: string }.
+ */
+async function downloadStatusReport({ transactionRef, rcNumber }) {
+  const key  = _getKey();
+  const url  = `${BASE_URL}/api/vas/engine/certificate/status-report`;
+  const body = rcNumber ? { rcNumber } : { transactionRef };
+
+  console.log(`[CAC VAS] → POST ${url} (status report download)`);
+  try {
+    const { data, headers } = await axios.post(url, body, {
+      headers:      { 'Content-Type': 'application/json', 'X_API_KEY': key },
+      responseType: 'arraybuffer',
+      timeout:      TIMEOUT_MS,
+    });
+    console.log('[CAC VAS] ← status report blob received, size:', data?.byteLength);
+    return {
+      buffer:      Buffer.from(data),
+      contentType: headers['content-type'] || 'application/pdf',
+    };
+  } catch (err) {
+    const httpStatus = err.response?.status;
+    console.error('[CAC VAS] status report download failed:', _redactKey(err.message), httpStatus ? `HTTP ${httpStatus}` : '');
+    const message = err.response?.data
+      ? Buffer.from(err.response.data).toString('utf8').substring(0, 200)
+      : err.message;
+    const error = new Error(_redactKey(message));
+    error.statusCode = httpStatus || 503;
+    throw error;
+  }
+}
+
+/**
  * Validation: look up company by RC Number.
  */
 async function getCompanyByRC({ rcNumber }) {
@@ -295,6 +329,7 @@ module.exports = {
   registerBusinessName,
   checkRegistrationStatus,
   downloadCertificate,
+  downloadStatusReport,
   getCompanyByRC,
   getCompanyByName,
   getCompanyByTIN,

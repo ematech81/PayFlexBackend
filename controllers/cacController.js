@@ -408,6 +408,35 @@ const downloadCertificate = async (req, res) => {
   }
 };
 
+// ─── POST /api/cac/registration/:transactionRef/status-report ────────────────
+// Free to download (no wallet deduction needed — status report is included).
+const downloadStatusReport = async (req, res) => {
+  try {
+    const { transactionRef } = req.params;
+
+    const reg = await CACRegistration.findOne({ transactionRef }).lean();
+    if (!reg) return res.status(404).json({ success: false, message: 'Registration not found.' });
+
+    if (String(reg.userId) !== String(req.user.id)) {
+      return res.status(403).json({ success: false, message: 'Access denied.' });
+    }
+
+    if (reg.status !== 'approved') {
+      return res.status(400).json({ success: false, message: 'Status report is only available after CAC approval.' });
+    }
+
+    const vasRef    = reg.vasTransactionRef || transactionRef;
+    const vasResult = await cacVasService.downloadStatusReport({ transactionRef: vasRef });
+    const safeName  = (reg.registrationData?.proposedOption1 || transactionRef).replace(/[^a-zA-Z0-9-_]/g, '_');
+    res.set('Content-Type', vasResult.contentType);
+    res.set('Content-Disposition', `attachment; filename="CAC-StatusReport-${safeName}.pdf"`);
+    return res.send(vasResult.buffer);
+  } catch (err) {
+    console.error('[cac] downloadStatusReport error:', err.message);
+    return res.status(err.statusCode || 500).json({ success: false, message: err.message });
+  }
+};
+
 // ─── POST /api/cac/search ─────────────────────────────────────────────────────
 // Business validation. verifyPin middleware runs before this handler.
 // Phase 1: atomic debit + records. Phase 2: VAS call (refund on failure).
@@ -703,6 +732,7 @@ module.exports = {
   getRegistrationStatus,
   resubmitRegistration,
   downloadCertificate,
+  downloadStatusReport,
   searchBusiness,
   getHistory,
   registerLLC,
