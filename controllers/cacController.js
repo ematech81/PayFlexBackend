@@ -316,7 +316,7 @@ const resubmitRegistration = async (req, res) => {
 };
 
 // ─── POST /api/cac/registration/:transactionRef/certificate ──────────────────
-// Paid certificate download. verifyPin middleware runs before this handler.
+// Free — VAS charges nothing per download; user already paid at registration.
 const downloadCertificate = async (req, res) => {
   try {
     const { transactionRef } = req.params;
@@ -332,69 +332,6 @@ const downloadCertificate = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Certificate is only available after CAC approval.' });
     }
 
-    const pricing = pricingService.getCACPrice('bn_certificate');
-
-    if (pricing.userPays > 0) {
-      const user = await User.findById(req.user.id).select('+walletBalance');
-      if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
-
-      if ((user.walletBalance || 0) < pricing.userPays) {
-        return res.status(400).json({
-          success: false,
-          message: `Insufficient wallet balance. Required: ₦${pricing.userPays.toLocaleString()}, Available: ₦${(user.walletBalance || 0).toLocaleString()}.`,
-        });
-      }
-
-      const txRef   = `cac-cert-${crypto.randomUUID()}`;
-      const session = await mongoose.startSession();
-      let txDoc;
-
-      try {
-        session.startTransaction();
-        [txDoc] = await Transaction.create(
-          [{
-            userId:               req.user.id,
-            amount:               pricing.userPays,
-            reference:            txRef,
-            status:               'pending',
-            type:                 'cac_registration',
-            paymentMethod:        'wallet',
-            provider:             pricing.provider,
-            userPaid:             pricing.userPays,
-            providerCost:         pricing.vasCost,
-            ourMargin:            pricing.ourMargin,
-            marginType:           'service_fee',
-            pricingConfigVersion: pricingService.getConfigVersion(),
-          }],
-          { session }
-        );
-        await deductWalletBalance(user, pricing.userPays, session);
-        await session.commitTransaction();
-      } catch (dbErr) {
-        await session.abortTransaction();
-        console.error('[cac] cert debit failed:', dbErr.message);
-        return res.status(500).json({ success: false, message: 'Could not process certificate fee. Please try again.' });
-      } finally {
-        session.endSession();
-      }
-
-      try {
-        // VAS needs the VAS-generated ref (VAS...), not our internal CACREG... ref
-        const vasRef    = reg.vasTransactionRef || transactionRef;
-        const vasResult = await cacVasService.downloadCertificate({ transactionRef: vasRef });
-        await Transaction.findByIdAndUpdate(txDoc._id, { status: 'success' }).catch(() => {});
-        const safeName = (reg.registrationData?.proposedOption1 || transactionRef).replace(/[^a-zA-Z0-9-_]/g, '_');
-        res.set('Content-Type', vasResult.contentType);
-        res.set('Content-Disposition', `attachment; filename="CAC-Certificate-${safeName}.pdf"`);
-        return res.send(vasResult.buffer);
-      } catch (vasErr) {
-        await refundWalletBalance(user, pricing.userPays).catch(() => {});
-        await Transaction.findByIdAndUpdate(txDoc._id, { status: 'failed', failureReason: vasErr.message }).catch(() => {});
-        return res.status(vasErr.statusCode || 502).json({ success: false, message: vasErr.message });
-      }
-    }
-
-    // pricing.userPays === 0 (free tier / future change)
     const vasRef    = reg.vasTransactionRef || transactionRef;
     const vasResult = await cacVasService.downloadCertificate({ transactionRef: vasRef });
     const safeName  = (reg.registrationData?.proposedOption1 || transactionRef).replace(/[^a-zA-Z0-9-_]/g, '_');
