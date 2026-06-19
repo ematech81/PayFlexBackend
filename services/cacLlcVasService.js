@@ -53,7 +53,10 @@ async function _post(path, body = {}) {
       return data;
     } catch (err) {
       const httpStatus  = err.response?.status;
-      const isRetryable = !httpStatus || httpStatus >= 500;
+      // Only retry on network-level failures (no response) or 502/503/504 gateway errors.
+      // VAS returns 500 for application-level rejections (e.g. account not yet activated) —
+      // retrying those wastes time without any chance of success.
+      const isRetryable = !httpStatus || httpStatus === 502 || httpStatus === 503 || httpStatus === 504;
       const rawBody     = err.response?.data;
       console.warn(
         `[CAC LLC VAS] POST failed (attempt ${attempt}/${MAX_RETRIES}): HTTP ${httpStatus ?? '(no response)'}`,
