@@ -10,23 +10,63 @@ const { deductWalletBalance, refundWalletBalance } = require('../util/paymentHel
 const MIN_TRANSFER   = 500;
 const DAILY_LIMIT    = 200_000;
 
+// Static Nigerian bank list — used as fallback when KoraPay bank API is unavailable
+const NIGERIAN_BANKS = [
+  { name: 'Access Bank',                    code: '044' },
+  { name: 'Citibank Nigeria',               code: '023' },
+  { name: 'Ecobank Nigeria',                code: '050' },
+  { name: 'Fidelity Bank',                  code: '070' },
+  { name: 'First Bank of Nigeria',          code: '011' },
+  { name: 'First City Monument Bank (FCMB)',code: '214' },
+  { name: 'Globus Bank',                    code: '103' },
+  { name: 'Guaranty Trust Bank (GTBank)',   code: '058' },
+  { name: 'Heritage Bank',                  code: '030' },
+  { name: 'Keystone Bank',                  code: '082' },
+  { name: 'Kuda Bank',                      code: '090267' },
+  { name: 'Moniepoint Microfinance Bank',   code: '090405' },
+  { name: 'Opay (OPay Digital Services)',   code: '100004' },
+  { name: 'PalmPay',                        code: '100033' },
+  { name: 'Polaris Bank',                   code: '076' },
+  { name: 'Providus Bank',                  code: '101' },
+  { name: 'Stanbic IBTC Bank',              code: '221' },
+  { name: 'Standard Chartered Bank',        code: '068' },
+  { name: 'Sterling Bank',                  code: '232' },
+  { name: 'Suntrust Bank',                  code: '100' },
+  { name: 'Taj Bank',                       code: '302' },
+  { name: 'Titan Trust Bank',               code: '102' },
+  { name: 'Union Bank of Nigeria',          code: '032' },
+  { name: 'United Bank for Africa (UBA)',   code: '033' },
+  { name: 'Unity Bank',                     code: '215' },
+  { name: 'VFD Microfinance Bank',          code: '090110' },
+  { name: 'Wema Bank',                      code: '035' },
+  { name: 'Zenith Bank',                    code: '057' },
+];
+
 // ─── GET /api/transfers/banks ─────────────────────────────────────────────────
 let _banksCache = null;
 let _banksCachedAt = 0;
 
 const getBanks = async (req, res) => {
   try {
-    // Cache bank list for 6 hours — it rarely changes
+    // Serve cache if fresh (6 hrs)
     if (_banksCache && Date.now() - _banksCachedAt < 6 * 60 * 60 * 1000) {
       return res.json({ success: true, data: _banksCache });
     }
-    const banks = await koraTransfer.getBanks();
-    _banksCache     = banks;
-    _banksCachedAt  = Date.now();
+    // Try KoraPay live list first; fall back to static list on any error
+    let banks;
+    try {
+      banks = await koraTransfer.getBanks();
+      if (!banks || banks.length === 0) banks = NIGERIAN_BANKS;
+    } catch (koraErr) {
+      console.warn('[transfer] KoraPay bank list unavailable, using static fallback:', koraErr.message);
+      banks = NIGERIAN_BANKS;
+    }
+    _banksCache    = banks;
+    _banksCachedAt = Date.now();
     return res.json({ success: true, data: banks });
   } catch (err) {
     console.error('[transfer] getBanks error:', err.message);
-    return res.status(err.statusCode || 502).json({ success: false, message: err.message });
+    return res.json({ success: true, data: NIGERIAN_BANKS });
   }
 };
 
