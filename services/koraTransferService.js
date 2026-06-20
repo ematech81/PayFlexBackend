@@ -32,9 +32,15 @@ function _koraErr(err) {
  */
 async function getBanks() {
   try {
-    const { data } = await koraApi.get('/misc/banks?countryCode=NG', { headers: _auth() });
-    return data.data || [];
+    const { data } = await koraApi.get('/misc/banks', { headers: _auth() });
+    console.log('[koraTransfer] getBanks raw response keys:', Object.keys(data || {}));
+    const list = Array.isArray(data?.data) ? data.data
+                : Array.isArray(data?.data?.banks) ? data.data.banks
+                : [];
+    console.log(`[koraTransfer] getBanks returning ${list.length} banks`);
+    return list;
   } catch (err) {
+    console.error('[koraTransfer] getBanks error:', err.response?.status, JSON.stringify(err.response?.data));
     throw _koraErr(err);
   }
 }
