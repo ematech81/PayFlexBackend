@@ -110,6 +110,9 @@ const startServer = async () => {
     // CAC VAS — business name registration & validation
     app.use('/api/cac', require('./routes/cacRoutes'));
 
+    // Bank transfers — KoraPay disbursement
+    app.use('/api/transfers', require('./routes/transferRoutes'));
+
     // MERPI / Syticks — bus tickets, events, cinema
     app.use('/api/merpi', require('./routes/merpiRoutes'));
 

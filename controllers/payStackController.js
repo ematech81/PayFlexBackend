@@ -189,41 +189,64 @@ exports.handleWebhook = async (req, res) => {
       return;
     }
 
-    if (payload.event !== 'charge.success') return;
-
     const { reference, amount, status } = payload.data || {};
-    if (status !== 'success' || !reference) return;
+    if (!reference) return;
 
-    // Idempotency: skip if already processed
-    const transaction = await Transaction.findOne({ reference, type: 'wallet_topup' });
-    if (!transaction || transaction.status !== 'pending') {
-      console.log(`[koraPayWebhook] Ref ${reference} already processed or not found — skipping.`);
+    // ── charge.success — wallet top-up ───────────────────────────────────────
+    if (payload.event === 'charge.success' && status === 'success') {
+      const transaction = await Transaction.findOne({ reference, type: 'wallet_topup' });
+      if (!transaction || transaction.status !== 'pending') {
+        console.log(`[koraPayWebhook] Ref ${reference} already processed or not found — skipping.`);
+        return;
+      }
+
+      const amountPaid = Number(amount);
+      const session = await mongoose.startSession();
+      try {
+        session.startTransaction();
+        const user = await User.findById(transaction.userId).select('+walletBalance').session(session);
+        if (!user) { await session.abortTransaction(); return; }
+
+        user.walletBalance   = (user.walletBalance || 0) + amountPaid;
+        await user.save({ session });
+        transaction.status   = 'success';
+        transaction.amount   = amountPaid;
+        transaction.response = payload.data;
+        transaction.paidAt   = new Date();
+        await transaction.save({ session });
+        await session.commitTransaction();
+        console.log(`[koraPayWebhook] Wallet credited ₦${amountPaid} for user ${user._id} ref ${reference}`);
+      } catch (err) {
+        await session.abortTransaction().catch(() => {});
+        console.error('[koraPayWebhook] Error crediting wallet:', err.message);
+      } finally {
+        session.endSession();
+      }
       return;
     }
 
-    const amountPaid = Number(amount); // Kora sends naira
-    const session = await mongoose.startSession();
-    try {
-      session.startTransaction();
-      const user = await User.findById(transaction.userId).select('+walletBalance').session(session);
-      if (!user) { await session.abortTransaction(); return; }
+    // ── transfer.success ─────────────────────────────────────────────────────
+    if (payload.event === 'transfer.success') {
+      const tx = await Transaction.findOne({ reference, type: 'bank_transfer' });
+      if (!tx || tx.status !== 'pending') return;
+      await Transaction.findByIdAndUpdate(tx._id, { status: 'success', response: payload.data });
+      console.log(`[koraPayWebhook] Transfer success ref ${reference}`);
+      return;
+    }
 
-      user.walletBalance = (user.walletBalance || 0) + amountPaid;
-      await user.save({ session });
-
-      transaction.status   = 'success';
-      transaction.amount   = amountPaid;
-      transaction.response = payload.data;
-      transaction.paidAt   = new Date();
-      await transaction.save({ session });
-      await session.commitTransaction();
-
-      console.log(`[koraPayWebhook] Wallet credited ₦${amountPaid} for user ${user._id} ref ${reference}`);
-    } catch (err) {
-      await session.abortTransaction().catch(() => {});
-      console.error('[koraPayWebhook] Error crediting wallet:', err.message);
-    } finally {
-      session.endSession();
+    // ── transfer.failed ──────────────────────────────────────────────────────
+    if (payload.event === 'transfer.failed') {
+      const tx = await Transaction.findOne({ reference, type: 'bank_transfer' });
+      if (!tx || tx.status !== 'pending') return;
+      // Refund wallet
+      const user = await User.findById(tx.userId).select('+walletBalance');
+      if (user) {
+        user.walletBalance = (user.walletBalance || 0) + tx.amount;
+        await user.save();
+        console.log(`[koraPayWebhook] Transfer failed — refunded ₦${tx.amount} to user ${user._id} ref ${reference}`);
+      }
+      await Transaction.findByIdAndUpdate(tx._id, { status: 'failed', response: payload.data });
+      return;
     }
   } catch (err) {
     console.error('[koraPayWebhook] Unhandled error:', err.message);

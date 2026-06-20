@@ -50,6 +50,7 @@ const transactionSchema = new mongoose.Schema({
       "wallet_topup",
       "wallet_withdrawal",
       "withdrawal",
+      "bank_transfer",
       // Referral bonuses
       "referral_bonus",
       // VTU Africa services
