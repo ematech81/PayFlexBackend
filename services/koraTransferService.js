@@ -32,8 +32,7 @@ function _koraErr(err) {
  */
 async function getBanks() {
   try {
-    const { data } = await koraApi.get('/misc/banks', { headers: _auth() });
-    console.log('[koraTransfer] getBanks raw response keys:', Object.keys(data || {}));
+    const { data } = await koraApi.get('/misc/banks?countryCode=NG', { headers: _auth() });
     const list = Array.isArray(data?.data) ? data.data
                 : Array.isArray(data?.data?.banks) ? data.data.banks
                 : [];
@@ -52,9 +51,10 @@ async function getBanks() {
  */
 async function resolveAccount({ bankCode, accountNumber }) {
   try {
-    const { data } = await koraApi.post('/misc/resolve-bank-account', {
-      bank:    bankCode,
-      account: accountNumber,
+    const { data } = await koraApi.post('/misc/banks/resolve', {
+      bank:     bankCode,
+      account:  accountNumber,
+      currency: 'NGN',
     }, { headers: _auth() });
     return data.data;
   } catch (err) {

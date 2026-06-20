@@ -7,6 +7,9 @@
  * Finds ExamPinTransaction and BettingTransaction records that are still "pending"
  * after 5 minutes, queries VTU Africa for their real status, and resolves them.
  *
+ * Also queries stuck bank_transfer transactions in 'processing' status after 10
+ * minutes via KoraPay payout status endpoint, and refunds on confirmed failure.
+ *
  * Resolution rules:
  *   - Status "Completed" → mark success, update charge fields, save pins if present
  *   - Any other status   → mark failed, refund wallet
@@ -18,6 +21,7 @@
 
 const mongoose           = require('mongoose');
 const vtuAfricaService   = require('../services/vtuAfricaService');
+const koraTransfer       = require('../services/koraTransferService');
 const ExamPinTransaction = require('../models/ExamPinTransaction');
 const BettingTransaction = require('../models/BettingTransaction');
 const Transaction        = require('../models/transaction');
@@ -25,6 +29,7 @@ const User               = require('../models/user');
 const { refundWalletBalance } = require('./paymentHelper');
 
 const PENDING_GRACE_MS   = 5  * 60 * 1000; // 5 min before we start querying
+const TRANSFER_GRACE_MS  = 10 * 60 * 1000; // 10 min for KoraPay payouts
 const STALE_ALERT_MS     = 2  * 60 * 60 * 1000; // 2 hr — ops alert threshold
 
 // ─── Main export ──────────────────────────────────────────────────────────────
@@ -35,7 +40,9 @@ async function runReconciliation() {
 
   console.log(`[reconciliation] Starting run at ${now.toISOString()}`);
 
-  const [examTxs, bettingTxs, a2cTxs] = await Promise.all([
+  const transferGraceAge = new Date(now - TRANSFER_GRACE_MS);
+
+  const [examTxs, bettingTxs, a2cTxs, transferTxs] = await Promise.all([
     ExamPinTransaction.find({
       status:    'pending',
       createdAt: { $lte: graceAge },
@@ -49,13 +56,19 @@ async function runReconciliation() {
       status:    'pending',
       createdAt: { $lte: graceAge },
     }),
+    Transaction.find({
+      type:      'bank_transfer',
+      status:    'processing',
+      createdAt: { $lte: transferGraceAge },
+    }),
   ]);
 
-  console.log(`[reconciliation] Found ${examTxs.length} exam + ${bettingTxs.length} betting + ${a2cTxs.length} A2C pending.`);
+  console.log(`[reconciliation] Found ${examTxs.length} exam + ${bettingTxs.length} betting + ${a2cTxs.length} A2C + ${transferTxs.length} transfer pending.`);
 
-  for (const tx of examTxs)   { await _resolveExam(tx, staleAge);    }
-  for (const tx of bettingTxs) { await _resolveBetting(tx, staleAge); }
-  for (const tx of a2cTxs)    { await _resolveA2C(tx, staleAge);     }
+  for (const tx of examTxs)     { await _resolveExam(tx, staleAge);     }
+  for (const tx of bettingTxs)  { await _resolveBetting(tx, staleAge);  }
+  for (const tx of a2cTxs)      { await _resolveA2C(tx, staleAge);      }
+  for (const tx of transferTxs) { await _resolveTransfer(tx, staleAge); }
 
   console.log('[reconciliation] Run complete.');
 }
@@ -183,6 +196,37 @@ async function _resolveA2C(tx, staleAge) {
     console.error(`[reconciliation] Error resolving A2C ref ${ref}:`, err.message);
   } finally {
     session.endSession();
+  }
+}
+
+// ─── Bank transfer (KoraPay payout) resolution ───────────────────────────────
+async function _resolveTransfer(tx, staleAge) {
+  const ref = tx.reference;
+  try {
+    if (tx.createdAt <= staleAge) {
+      console.error(`[reconciliation] ALERT: Bank transfer ref ${ref} has been processing for >2 hours — manual review required.`);
+    }
+
+    const koraData = await koraTransfer.getTransferStatus(ref);
+    const status   = koraData?.status;
+
+    if (status === 'success') {
+      await Transaction.findByIdAndUpdate(tx._id, { status: 'success', response: koraData });
+      console.log(`[reconciliation] Transfer ref ${ref} resolved → success.`);
+    } else if (status === 'failed') {
+      const user = await User.findById(tx.userId).select('+walletBalance');
+      if (user) await refundWalletBalance(user, tx.amount);
+      await Transaction.findByIdAndUpdate(tx._id, {
+        status:        'failed',
+        failureReason: koraData?.narration || 'Transfer failed per KoraPay reconciliation',
+        response:      koraData,
+      });
+      console.log(`[reconciliation] Transfer ref ${ref} resolved → failed. ₦${tx.amount} refunded to user ${tx.userId}.`);
+    } else {
+      console.log(`[reconciliation] Transfer ref ${ref} still ${status || 'unknown'} — will retry next run.`);
+    }
+  } catch (err) {
+    console.error(`[reconciliation] Error resolving transfer ref ${ref}:`, err.message);
   }
 }
 

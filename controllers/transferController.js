@@ -135,7 +135,7 @@ const initiateTransfer = async (req, res) => {
     }
 
     // ── Deduct wallet + create pending transaction (atomic) ──────────────────
-    const reference = `PF_TRF_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+    const reference = `PFX-WD-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
     const session   = await mongoose.startSession();
     let txDoc;
 
@@ -183,15 +183,34 @@ const initiateTransfer = async (req, res) => {
         newBalance,
       });
     } catch (koraErr) {
-      // KoraPay rejected — refund wallet
+      const httpStatus = koraErr.statusCode || 502;
+      console.error('[transfer] KoraPay disburse error:', httpStatus, koraErr.message);
+
+      // Per KoraPay guidance: a 5xx/timeout does NOT mean the transfer failed —
+      // the payout may still be processing on their end. Query before refunding
+      // to avoid giving the user both their bank credit and their wallet money back.
+      if (httpStatus >= 500 || koraErr.code === 'ECONNABORTED') {
+        await Transaction.findByIdAndUpdate(txDoc._id, {
+          status:        'processing',
+          failureReason: `KoraPay call uncertain: ${koraErr.message}`,
+          response:      koraErr.koraData,
+        }).catch(() => {});
+        return res.status(202).json({
+          success:   true,
+          reference,
+          status:    'processing',
+          message:   'Transfer submitted. We are confirming with the bank — you will be notified of the outcome.',
+        });
+      }
+
+      // 4xx — definitive rejection (bad account, auth error, etc.) → safe to refund
       await refundWalletBalance(user, amountNum).catch(() => {});
       await Transaction.findByIdAndUpdate(txDoc._id, {
         status:        'failed',
         failureReason: koraErr.message,
         response:      koraErr.koraData,
       }).catch(() => {});
-      console.error('[transfer] KoraPay disburse failed:', koraErr.message);
-      return res.status(koraErr.statusCode || 502).json({
+      return res.status(httpStatus).json({
         success: false,
         message: koraErr.message || 'Transfer failed. Your wallet has been refunded.',
       });
