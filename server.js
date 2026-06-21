@@ -129,16 +129,6 @@ const startServer = async () => {
     // 8️⃣ Health endpoint
     app.get("/health", (req, res) => res.json({ ok: true }));
 
-    // Temporary: returns this server's outbound public IP (for KoraPay IP whitelisting)
-    app.get("/server-ip", async (req, res) => {
-      try {
-        const r = await require('axios').get('https://api.ipify.org?format=json', { timeout: 5000 });
-        return res.json({ ip: r.data.ip });
-      } catch (e) {
-        return res.json({ ip: null, error: e.message });
-      }
-    });
-
     // 9️⃣ Global error handler (must be last)
     app.use(errorHandler);
 
