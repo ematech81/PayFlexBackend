@@ -113,6 +113,9 @@ const startServer = async () => {
     // Bank transfers — KoraPay disbursement
     app.use('/api/transfers', require('./routes/transferRoutes'));
 
+    // Bank transfers — VTU Africa (active fallback while KoraPay docs are pending)
+    app.use('/api/vtransfers', require('./routes/vtuTransferRoutes'));
+
     // MERPI / Syticks — bus tickets, events, cinema
     app.use('/api/merpi', require('./routes/merpiRoutes'));
 

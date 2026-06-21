@@ -22,6 +22,7 @@
 const mongoose           = require('mongoose');
 const vtuAfricaService   = require('../services/vtuAfricaService');
 const koraTransfer       = require('../services/koraTransferService');
+const vtuTransferService = require('../services/vtuAfricaTransferService');
 const ExamPinTransaction = require('../models/ExamPinTransaction');
 const BettingTransaction = require('../models/BettingTransaction');
 const Transaction        = require('../models/transaction');
@@ -42,7 +43,7 @@ async function runReconciliation() {
 
   const transferGraceAge = new Date(now - TRANSFER_GRACE_MS);
 
-  const [examTxs, bettingTxs, a2cTxs, transferTxs] = await Promise.all([
+  const [examTxs, bettingTxs, a2cTxs, transferTxs, vtuTransferTxs] = await Promise.all([
     ExamPinTransaction.find({
       status:    'pending',
       createdAt: { $lte: graceAge },
@@ -58,17 +59,25 @@ async function runReconciliation() {
     }),
     Transaction.find({
       type:      'bank_transfer',
+      provider:  'kora-pay',
+      status:    'processing',
+      createdAt: { $lte: transferGraceAge },
+    }),
+    Transaction.find({
+      type:      'bank_transfer',
+      provider:  'vtu-africa',
       status:    'processing',
       createdAt: { $lte: transferGraceAge },
     }),
   ]);
 
-  console.log(`[reconciliation] Found ${examTxs.length} exam + ${bettingTxs.length} betting + ${a2cTxs.length} A2C + ${transferTxs.length} transfer pending.`);
+  console.log(`[reconciliation] Found ${examTxs.length} exam + ${bettingTxs.length} betting + ${a2cTxs.length} A2C + ${transferTxs.length} KoraPay transfer + ${vtuTransferTxs.length} VTU transfer pending.`);
 
-  for (const tx of examTxs)     { await _resolveExam(tx, staleAge);     }
-  for (const tx of bettingTxs)  { await _resolveBetting(tx, staleAge);  }
-  for (const tx of a2cTxs)      { await _resolveA2C(tx, staleAge);      }
-  for (const tx of transferTxs) { await _resolveTransfer(tx, staleAge); }
+  for (const tx of examTxs)        { await _resolveExam(tx, staleAge);        }
+  for (const tx of bettingTxs)     { await _resolveBetting(tx, staleAge);     }
+  for (const tx of a2cTxs)         { await _resolveA2C(tx, staleAge);         }
+  for (const tx of transferTxs)    { await _resolveTransfer(tx, staleAge);    }
+  for (const tx of vtuTransferTxs) { await _resolveVtuTransfer(tx, staleAge); }
 
   console.log('[reconciliation] Run complete.');
 }
@@ -196,6 +205,32 @@ async function _resolveA2C(tx, staleAge) {
     console.error(`[reconciliation] Error resolving A2C ref ${ref}:`, err.message);
   } finally {
     session.endSession();
+  }
+}
+
+// ─── VTU Africa bank transfer resolution ─────────────────────────────────────
+async function _resolveVtuTransfer(tx, staleAge) {
+  const ref = tx.reference;
+  try {
+    if (tx.createdAt <= staleAge) {
+      console.error(`[reconciliation] ALERT: VTU transfer ref ${ref} has been processing for >2 hours — manual review required.`);
+    }
+    const result = await vtuTransferService.queryTransfer({ ref });
+    const desc   = result?.description || {};
+
+    if (desc.Status === 'Completed') {
+      await Transaction.findByIdAndUpdate(tx._id, { status: 'success', response: desc });
+      console.log(`[reconciliation] VTU transfer ref ${ref} resolved → success.`);
+    } else if (result?.ok === false) {
+      const user = await User.findById(tx.userId).select('+walletBalance');
+      if (user) await refundWalletBalance(user, tx.amount);
+      await Transaction.findByIdAndUpdate(tx._id, { status: 'failed', failureReason: desc.message || 'Failed per reconciliation', response: desc });
+      console.log(`[reconciliation] VTU transfer ref ${ref} resolved → failed. ₦${tx.amount} refunded.`);
+    } else {
+      console.log(`[reconciliation] VTU transfer ref ${ref} still pending — will retry next run.`);
+    }
+  } catch (err) {
+    console.error(`[reconciliation] Error resolving VTU transfer ref ${ref}:`, err.message);
   }
 }
 
