@@ -7,6 +7,7 @@ const { v2: cloudinary } = require("cloudinary");
 const User = require("../models/user");
 const PendingRegistration = require("../models/PendingRegistration");
 const { generateAlphanumericOTP } = require("../service/bulkSmsService");
+const { sendEmail }               = require("../util/sendEmail");
 
 // Configure Cloudinary (reads from env at call time)
 cloudinary.config({
@@ -111,40 +112,6 @@ async function dispatchOtp(phone, email, otp) {
   smsJob();
   emailJob();
   return {};
-}
-
-/**
- * Sends email via Brevo HTTP API (port 443 — never blocked by cloud providers).
- * Requires BREVO_API_KEY env var. Falls back to console log if not set.
- */
-async function sendEmail(to, subject, text) {
-  const apiKey = process.env.BREVO_API_KEY;
-  if (!apiKey) {
-    console.log(`⚠️  [EMAIL] BREVO_API_KEY not set — skipping email to ${to}`);
-    return;
-  }
-
-  const senderEmail = process.env.SMTP_FROM || "nwankwolivinus95@gmail.com";
-  console.log(`📧 [EMAIL] Attempting to send to ${to} via Brevo API`);
-
-  const { data } = await axios.post(
-    "https://api.brevo.com/v3/smtp/email",
-    {
-      sender:      { name: "PayFlex", email: senderEmail },
-      to:          [{ email: to }],
-      subject,
-      textContent: text,
-    },
-    {
-      headers: {
-        "api-key":      apiKey,
-        "Content-Type": "application/json",
-      },
-      timeout: 15000,
-    }
-  );
-
-  console.log(`✅ [EMAIL] Sent to ${to} — messageId: ${data.messageId}`);
 }
 
 // ---------- Main Controller ----------

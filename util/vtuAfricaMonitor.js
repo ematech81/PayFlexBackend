@@ -1,24 +1,12 @@
 'use strict';
 
-/**
- * VTU Africa Balance Monitor
- *
- * Runs on an hourly cron schedule. Fetches the VTU Africa account balance
- * and logs a warning or critical alert based on configured thresholds.
- *
- * Thresholds (override via env vars):
- *   VTUAFRICA_BALANCE_WARN_NGN     default: 20000  (₦20,000 — warn)
- *   VTUAFRICA_BALANCE_CRITICAL_NGN default:  5000  (₦5,000 — critical, consider disabling features)
- *
- * This module does NOT automatically disable features — it logs loudly so
- * ops can respond. If you want auto-disable, set FEATURE_EXAM_PINS_ENABLED=false
- * and FEATURE_BETTING_ENABLED=false in your environment and redeploy.
- */
-
 const vtuAfricaService = require('../services/vtuAfricaService');
+const { sendEmail }    = require('./sendEmail');
 
 const WARN_THRESHOLD     = parseInt(process.env.VTUAFRICA_BALANCE_WARN_NGN     || '20000', 10);
 const CRITICAL_THRESHOLD = parseInt(process.env.VTUAFRICA_BALANCE_CRITICAL_NGN ||  '5000', 10);
+
+const OPS_EMAIL = process.env.OPS_ALERT_EMAIL || process.env.SMTP_FROM || 'nwankwolivinus95@gmail.com';
 
 async function checkBalance() {
   try {
@@ -34,14 +22,29 @@ async function checkBalance() {
     if (balance <= CRITICAL_THRESHOLD) {
       console.error(
         `[vtuAfricaMonitor] CRITICAL: VTU Africa balance is ₦${balance.toLocaleString()} ` +
-        `(threshold: ₦${CRITICAL_THRESHOLD.toLocaleString()}). ` +
-        `Services may fail. Consider disabling FEATURE_EXAM_PINS_ENABLED and FEATURE_BETTING_ENABLED.`
+        `(threshold: ₦${CRITICAL_THRESHOLD.toLocaleString()}). Services may fail.`
       );
+      await sendEmail(
+        OPS_EMAIL,
+        '🚨 PayFlex CRITICAL: VTU Africa balance critically low',
+        `Your VTU Africa merchant wallet balance is ₦${balance.toLocaleString()}.\n\n` +
+        `This is below the critical threshold of ₦${CRITICAL_THRESHOLD.toLocaleString()}. ` +
+        `Bank transfers and VAS services may start failing for your users.\n\n` +
+        `Please top up your VTU Africa merchant wallet immediately via the VTU Africa dashboard.`
+      ).catch(e => console.error('[vtuAfricaMonitor] Failed to send critical alert email:', e.message));
     } else if (balance <= WARN_THRESHOLD) {
       console.warn(
         `[vtuAfricaMonitor] WARNING: VTU Africa balance is ₦${balance.toLocaleString()} ` +
         `(threshold: ₦${WARN_THRESHOLD.toLocaleString()}). Top up soon.`
       );
+      await sendEmail(
+        OPS_EMAIL,
+        '⚠️ PayFlex Warning: VTU Africa balance is low',
+        `Your VTU Africa merchant wallet balance is ₦${balance.toLocaleString()}.\n\n` +
+        `This is below the warning threshold of ₦${WARN_THRESHOLD.toLocaleString()}. ` +
+        `Please top up your VTU Africa merchant wallet soon to avoid service disruptions.\n\n` +
+        `Log in to the VTU Africa dashboard to fund your account.`
+      ).catch(e => console.error('[vtuAfricaMonitor] Failed to send warning email:', e.message));
     } else {
       console.log(`[vtuAfricaMonitor] Balance OK: ₦${balance.toLocaleString()}`);
     }
