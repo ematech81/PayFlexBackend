@@ -295,8 +295,16 @@ const resubmitRegistration = async (req, res) => {
       });
     }
 
+    // Strip empty/null/undefined values so VAS doesn't complain about missing fields
+    const cleanData = { ...registrationData, proposedName: reg.proposedName };
+    Object.keys(cleanData).forEach(k => {
+      if (cleanData[k] === '' || cleanData[k] === null || cleanData[k] === undefined) {
+        delete cleanData[k];
+      }
+    });
+
     const vasResult = await cacVasService.registerBusinessName({
-      registrationData: { ...registrationData, proposedName: reg.proposedName },
+      registrationData: cleanData,
       priorityService:  reg.priorityService,
       transactionRef,
     });
