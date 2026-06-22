@@ -324,6 +324,22 @@ async function validateBnPayload(payload) {
   return _post('/api/vas/engine/pre/bn/validation', payload);
 }
 
+/**
+ * Respond to a CAC query on a previously submitted BN registration.
+ * Uses the VAS transaction ref (VAS…), NOT the internal PayFlex ref.
+ * Sends the corrected/missing fields (e.g. signature, passport, text corrections).
+ * VAS returns { statusCode: 200, message: "query data received successfully", data: null }.
+ *
+ * @param {string} vasTransactionRef  - The VAS-side ref stored as reg.vasTransactionRef
+ * @param {object} corrections        - Only non-empty corrected fields; caller must strip nulls
+ */
+async function resolveQuery({ vasTransactionRef, corrections }) {
+  return _post('/api/vas/engine/pre/query', {
+    transactionRef: vasTransactionRef,
+    ...corrections,
+  });
+}
+
 // ─── Exports ─────────────────────────────────────────────────────────────────
 
 module.exports = {
@@ -339,4 +355,5 @@ module.exports = {
   generateTIN,
   bnCompliance,
   validateBnPayload,
+  resolveQuery,
 };

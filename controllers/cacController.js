@@ -295,28 +295,31 @@ const resubmitRegistration = async (req, res) => {
       });
     }
 
-    // Strip empty/null/undefined values so VAS doesn't complain about missing fields
-    const cleanData = { ...registrationData, proposedName: reg.proposedName };
-    Object.keys(cleanData).forEach(k => {
-      if (cleanData[k] === '' || cleanData[k] === null || cleanData[k] === undefined) {
-        delete cleanData[k];
-      }
+    // VAS query resolution requires the VAS-side ref (VAS…), not our internal ref.
+    // If vasTransactionRef was never stored (edge case on very old records), fall back
+    // to the internal ref and let VAS reject with a clear error rather than silently
+    // calling the wrong endpoint.
+    const vasRef = reg.vasTransactionRef || transactionRef;
+
+    // Build corrections payload: merge incoming data with original, then strip
+    // empty/null/undefined so VAS doesn't see absent optional fields as errors.
+    const merged = { ...reg.registrationData, ...registrationData };
+    const corrections = {};
+    Object.keys(merged).forEach(k => {
+      const v = merged[k];
+      if (v !== '' && v !== null && v !== undefined) corrections[k] = v;
     });
 
-    const vasResult = await cacVasService.registerBusinessName({
-      registrationData: cleanData,
-      priorityService:  reg.priorityService,
-      transactionRef,
-    });
+    const vasResult = await cacVasService.resolveQuery({ vasTransactionRef: vasRef, corrections });
 
-    const vasTransactionRef = vasResult?.data?.transactionRef || vasResult?.transactionRef || null;
-    reg.registrationData = registrationData;
+    // Persist the updated registration data; keep vasTransactionRef unchanged
+    // (VAS reuses the same ref for query resolutions — no new ref is issued).
+    reg.registrationData = { ...reg.registrationData, ...registrationData };
     reg.status           = 'pending';
     reg.webhookReceived  = false;
-    if (vasTransactionRef) reg.vasTransactionRef = vasTransactionRef;
     await reg.save();
 
-    return res.json({ success: true, message: 'Resubmission successful. Awaiting CAC review.', transactionRef, vasStatus: vasResult });
+    return res.json({ success: true, message: 'Query response submitted. Awaiting CAC review.', transactionRef, vasStatus: vasResult });
   } catch (err) {
     console.error('[cac] resubmit error:', err.message);
     return res.status(err.statusCode || 502).json({ success: false, message: err.message });
