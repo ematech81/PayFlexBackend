@@ -641,6 +641,14 @@ const validatePayload = async (req, res) => {
   // Strip base64 images — never forward to VAS logs
   IMAGE_FIELDS.forEach(f => delete payload[f]);
 
+  // Strip empty/null/undefined fields — VAS validates every key it receives,
+  // so forwarding empty optional fields triggers false "empty data passed" errors
+  Object.keys(payload).forEach(k => {
+    if (payload[k] === '' || payload[k] === null || payload[k] === undefined) {
+      delete payload[k];
+    }
+  });
+
   try {
     const vasResult = await cacVasService.validateBnPayload(payload);
     return res.json({ success: true, data: vasResult });
