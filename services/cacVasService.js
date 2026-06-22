@@ -145,7 +145,7 @@ async function _get(path) {
  * advanceCheck is a query parameter per VAS docs.
  */
 async function validateBusinessName({ proposedName, lineOfBusiness }) {
-  return _post('/api/vas/engine/pre/bn-compliance?advanceCheck=true', {
+  return _post('/api/vas/engine/pre/bn-compliance', {
     proposedName,
     lineOfBusiness: lineOfBusiness || '',
   });
@@ -308,7 +308,7 @@ async function generateTIN({ rcNumber }) {
  * Returns statusCode, message, recommendedActions, suggestedNames, similarNames.
  */
 async function bnCompliance({ proposedName, lineOfBusiness }) {
-  return _post('/api/vas/engine/pre/bn-compliance?advanceCheck=true', {
+  return _post('/api/vas/engine/pre/bn-compliance', {
     proposedName,
     lineOfBusiness: lineOfBusiness || '',
   });
