@@ -43,9 +43,48 @@ const nameReservation = async (req, res) => {
     });
   }
 
+  const cleanName = proposedName.trim().toUpperCase();
+
+  // Check for an existing non-cancelled session for this user + name first.
+  // This lets users resume mid-registration without re-calling VAS.
+  try {
+    const existing = await CacLlcSession.findOne({
+      userId:       req.user.id,
+      proposedName: cleanName,
+      status:       { $nin: ['failed', 'cancelled'] },
+    }).sort({ createdAt: -1 });
+
+    if (existing) {
+      const now     = new Date();
+      const expired = existing.reservationExpiry && existing.reservationExpiry < now;
+      if (expired) {
+        return res.status(400).json({
+          success: false,
+          expired: true,
+          message: `Your reservation for "${cleanName}" expired on ${existing.reservationExpiry.toLocaleDateString('en-NG')}. Please reserve the name again to continue.`,
+        });
+      }
+      // Active session found — return it so the frontend can jump to the right step.
+      return res.json({
+        success:         true,
+        resumed:         true,
+        sessionId:       existing._id,
+        reservationCode: existing.reservationCode,
+        expiryDate:      existing.reservationExpiry,
+        proposedName:    existing.proposedName,
+        companyType:     existing.companyType,
+        currentStatus:   existing.status,
+        message:         'Resuming your existing registration session.',
+      });
+    }
+  } catch (dbErr) {
+    console.error('[cac-llc] nameReservation session lookup error:', dbErr.message);
+    // Non-fatal — fall through to VAS call
+  }
+
   try {
     const vasResult = await cacLlcVas.reserveName({
-      proposedName: proposedName.trim().toUpperCase(),
+      proposedName: cleanName,
       companyTypes: companyType,
     });
 
@@ -61,7 +100,7 @@ const nameReservation = async (req, res) => {
 
     const session = await CacLlcSession.create({
       userId:            req.user.id,
-      proposedName:      proposedName.trim().toUpperCase(),
+      proposedName:      cleanName,
       companyType,
       reservationCode,
       reservationExpiry: expiryDate ? new Date(expiryDate) : null,
@@ -99,7 +138,16 @@ const generateMemoObjects = async (req, res) => {
 
   try {
     const vasResult = await cacLlcVas.generateMemoObjects({ countOfObjects, natureOfBusiness });
-    const objects   = vasResult?.objectsOfMem || vasResult?.data?.objectsOfMem || [];
+
+    // VAS may return the objects under different shapes — handle all known variants:
+    //   { data: ["obj1", "obj2"] }           → data is the array directly
+    //   { data: { objectsOfMem: [...] } }    → nested under objectsOfMem
+    //   { objectsOfMem: [...] }              → at root
+    console.log('[cac-llc] generateMemoObjects raw VAS response:', JSON.stringify(vasResult).substring(0, 500));
+    const raw     = vasResult?.data;
+    const objects = Array.isArray(raw)
+      ? raw
+      : (raw?.objectsOfMem || vasResult?.objectsOfMem || []);
 
     return res.json({ success: true, objectsOfMem: objects });
   } catch (err) {
