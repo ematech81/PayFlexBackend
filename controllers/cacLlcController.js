@@ -230,17 +230,22 @@ const createCompany = async (req, res) => {
   }
 
   try {
-    const vasResult = await cacLlcVas.createCompany({
-      reservationCode:          session.reservationCode,
-      companyType:              session.companyType,
+    const cleanObjects = (objectsOfMem || session.objectsOfMem || []).filter(o => typeof o === 'string' && o.trim());
+
+    const createPayload = {
+      reservationCode:         session.reservationCode,
+      companyType:             session.companyType,
       natureOfBusinessCategory,
       natureOfBusiness,
       principalActivityDescription,
       companyEmail,
       phoneNumber,
       companyAddress,
-      objectsOfMem: objectsOfMem || session.objectsOfMem,
-    });
+      objectsOfMem: cleanObjects,
+    };
+    console.log('[cac-llc] createCompany VAS payload:', JSON.stringify(createPayload).substring(0, 800));
+
+    const vasResult = await cacLlcVas.createCompany(createPayload);
 
     const vasTransactionRef = vasResult?.data?.transactionRef || vasResult?.transactionRef;
     if (!vasTransactionRef) {

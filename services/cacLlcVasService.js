@@ -116,24 +116,10 @@ async function analyseMemoObjects({ objects }) {
  * Step 4 — Create the company.
  * Returns: { data: { transactionRef } }
  */
-async function createCompany({
-  reservationCode, companyType, natureOfBusinessCategory, natureOfBusiness,
-  principalActivityDescription, companyEmail, phoneNumber, companyAddress, objectsOfMem,
-}) {
-  return _post('/api/vas/llc/company', {
-    reservationCode,
-    companyType,
-    natureOfBusinessCategory,
-    natureOfBusiness,
-    principalActivityDescription,
-    companyEmail,
-    phoneNumber,
-    companyAddress: {
-      registeredAddress: companyAddress.registeredAddress,
-      headOffice:        companyAddress.headOffice,
-    },
-    objectsOfMem,
-  });
+async function createCompany(payload) {
+  // Pass the payload through exactly as constructed by the controller.
+  // companyAddress already has the correct { registeredAddress, headOffice } shape.
+  return _post('/api/vas/llc/company', payload);
 }
 
 /**
