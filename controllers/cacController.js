@@ -614,6 +614,40 @@ const handleWebhook = async (req, res) => {
   }
 };
 
+// ─── POST /api/cac/dev/force-approve/:transactionRef ─────────────────────────
+// SANDBOX / DEV ONLY — never reaches production (route not registered there).
+// Forces a registration to 'approved' so certificate/status-report flows can
+// be tested without waiting for real VAS sandbox approval.
+const devForceApprove = async (req, res) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(403).json({ success: false, message: 'Not available in production.' });
+  }
+  try {
+    const { transactionRef } = req.params;
+    const { rcNumber, tin }  = req.body;
+
+    const reg = await CACRegistration.findOne({ transactionRef });
+    if (!reg) return res.status(404).json({ success: false, message: 'Registration not found.' });
+
+    if (String(reg.userId) !== String(req.user.id) && !req.user.roles?.includes('admin')) {
+      return res.status(403).json({ success: false, message: 'Access denied.' });
+    }
+
+    reg.status            = 'approved';
+    reg.rcNumber          = rcNumber  || `BN${Date.now()}`;
+    reg.tin               = tin       || `${Date.now()}-0001`;
+    reg.completedAt       = new Date();
+    reg.webhookReceived   = false; // allow re-triggering if needed
+    reg.querySubmittedAt  = undefined;
+    await reg.save();
+
+    console.log(`[cac][DEV] Force-approved ${transactionRef} → rcNumber=${reg.rcNumber}`);
+    return res.json({ success: true, rcNumber: reg.rcNumber, tin: reg.tin });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 // ─── POST /api/cac/compliance ─────────────────────────────────────────────────
 // Free BN compliance pre-check (no wallet deduction).
 // Returns statusCode, message, recommendedActions, suggestedNames, similarNames.
@@ -711,4 +745,5 @@ module.exports = {
   handleWebhook,
   checkCompliance,
   validatePayload,
+  devForceApprove,
 };

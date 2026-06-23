@@ -18,6 +18,7 @@ const {
   handleWebhook,
   checkCompliance,
   validatePayload,
+  devForceApprove,
 } = require('../controllers/cacController');
 
 // ── Webhook (no auth — raw body set in server.js before express.json()) ───────
@@ -33,6 +34,9 @@ router.get('/history',        protect, getHistory);
 // ── Registration ──────────────────────────────────────────────────────────────
 router.post('/register/business-name', protect, verifyPin, registerBusinessName);
 router.post('/register/llc',           protect, registerLLC);
+
+// ── Dev / sandbox helpers (blocked in production by the handler itself) ───────
+router.post('/dev/force-approve/:transactionRef', protect, devForceApprove);
 
 // ── Per-registration actions ──────────────────────────────────────────────────
 router.get('/registration/:transactionRef',                         protect, getRegistrationStatus);
