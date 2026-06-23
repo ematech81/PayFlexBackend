@@ -424,7 +424,10 @@ const downloadCertificate = async (req, res) => {
     }
 
     const vasRef    = reg.vasTransactionRef || transactionRef;
-    const vasResult = await cacVasService.downloadCertificate({ transactionRef: vasRef });
+    const vasResult = await cacVasService.downloadCertificate({
+      transactionRef: vasRef,
+      rcNumber:       reg.rcNumber || undefined,
+    });
     res.set('Content-Type', vasResult.contentType);
     res.set('Content-Disposition', `attachment; filename="CAC-Certificate-${safeName}.pdf"`);
     return res.send(vasResult.buffer);
@@ -473,7 +476,10 @@ const downloadStatusReport = async (req, res) => {
     }
 
     const vasRef    = reg.vasTransactionRef || transactionRef;
-    const vasResult = await cacVasService.downloadStatusReport({ transactionRef: vasRef });
+    const vasResult = await cacVasService.downloadStatusReport({
+      transactionRef: vasRef,
+      rcNumber:       reg.rcNumber || undefined,
+    });
     res.set('Content-Type', vasResult.contentType);
     res.set('Content-Disposition', `attachment; filename="CAC-StatusReport-${safeName}.pdf"`);
     return res.send(vasResult.buffer);

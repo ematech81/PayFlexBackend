@@ -183,7 +183,10 @@ async function checkRegistrationStatus({ transactionRef }) {
 async function downloadCertificate({ transactionRef, rcNumber }) {
   const key  = _getKey();
   const url  = `${BASE_URL}/api/vas/engine/certificate`;
-  const body = rcNumber ? { rcNumber } : { transactionRef };
+  const body = {
+    ...(transactionRef && { transactionRef }),
+    ...(rcNumber       && { rcNumber }),
+  };
 
   console.log(`[CAC VAS] → POST ${url} (certificate download)`);
   try {
@@ -217,7 +220,10 @@ async function downloadCertificate({ transactionRef, rcNumber }) {
 async function downloadStatusReport({ transactionRef, rcNumber }) {
   const key  = _getKey();
   const url  = `${BASE_URL}/api/vas/engine/certificate/status-report`;
-  const body = rcNumber ? { rcNumber } : { transactionRef };
+  const body = {
+    ...(transactionRef && { transactionRef }),
+    ...(rcNumber       && { rcNumber }),
+  };
 
   console.log(`[CAC VAS] → POST ${url} (status report download)`);
   try {
