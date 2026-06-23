@@ -18,6 +18,49 @@ function featureEnabled() {
   return process.env.FEATURE_CAC_ENABLED !== 'false';
 }
 
+// ─── Dev-only test PDF generator ──────────────────────────────────────────────
+// Used by downloadCertificate / downloadStatusReport in non-production so the
+// full download flow (save, share dialog, PDF viewer) can be tested without a
+// real VAS approval. Generates a properly-structured minimal PDF with text.
+function _buildDevPdf(lines) {
+  const safe = (s) => String(s || '').replace(/[()\\]/g, '\\$&');
+  let y = 720;
+  const ops = lines.map(l => {
+    const op = `/F1 12 Tf 50 ${y} Td (${safe(l)}) Tj`;
+    y -= 18;
+    return op;
+  });
+  const streamContent = `BT\n${ops.join('\n')}\nET`;
+  const streamLen     = Buffer.byteLength(streamContent, 'utf8');
+
+  const font  = '<</Type /Font /Subtype /Type1 /BaseFont /Helvetica>>';
+  const objDefs = [
+    null, // obj 0 = free
+    '<</Type /Catalog /Pages 2 0 R>>',
+    '<</Type /Pages /Kids [3 0 R] /Count 1>>',
+    `<</Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources <</Font <</F1 ${font}>>>>>>`,
+    `<</Length ${streamLen}>>\nstream\n${streamContent}\nendstream`,
+  ];
+
+  const header = '%PDF-1.4\n';
+  let body     = header;
+  const xrefs  = [0]; // obj 0 free at offset 0
+
+  for (let i = 1; i < objDefs.length; i++) {
+    xrefs.push(Buffer.byteLength(body, 'utf8'));
+    body += `${i} 0 obj\n${objDefs[i]}\nendobj\n`;
+  }
+
+  const xrefOffset = Buffer.byteLength(body, 'utf8');
+  let xref = `xref\n0 ${objDefs.length}\n0000000000 65535 f \n`;
+  for (let i = 1; i < objDefs.length; i++) {
+    xref += `${String(xrefs[i]).padStart(10, '0')} 00000 n \n`;
+  }
+  const trailer = `trailer\n<</Size ${objDefs.length} /Root 1 0 R>>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+
+  return Buffer.from(body + xref + trailer, 'utf8');
+}
+
 // ─── Webhook signature ────────────────────────────────────────────────────────
 function verifyWebhookSig(rawBody, headerSig) {
   const secret = process.env.CAC_VAS_WEBHOOK_SECRET;
@@ -359,9 +402,29 @@ const downloadCertificate = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Certificate is only available after CAC approval.' });
     }
 
+    const safeName = (reg.registrationData?.proposedOption1 || transactionRef).replace(/[^a-zA-Z0-9-_]/g, '_');
+
+    // In non-production, VAS won't have a real approval record for test
+    // registrations — bypass VAS and return a generated placeholder PDF.
+    if (process.env.NODE_ENV !== 'production') {
+      const pdf = _buildDevPdf([
+        'CAC CERTIFICATE OF REGISTRATION',
+        '(SANDBOX TEST DOCUMENT - NOT FOR OFFICIAL USE)',
+        '',
+        `Business Name : ${reg.registrationData?.proposedOption1 || 'N/A'}`,
+        `RC Number     : ${reg.rcNumber || 'N/A'}`,
+        `TIN           : ${reg.tin || 'N/A'}`,
+        `Ref           : ${transactionRef}`,
+        '',
+        'This document is generated for development testing only.',
+      ]);
+      res.set('Content-Type', 'application/pdf');
+      res.set('Content-Disposition', `attachment; filename="CAC-Certificate-${safeName}.pdf"`);
+      return res.send(pdf);
+    }
+
     const vasRef    = reg.vasTransactionRef || transactionRef;
     const vasResult = await cacVasService.downloadCertificate({ transactionRef: vasRef });
-    const safeName  = (reg.registrationData?.proposedOption1 || transactionRef).replace(/[^a-zA-Z0-9-_]/g, '_');
     res.set('Content-Type', vasResult.contentType);
     res.set('Content-Disposition', `attachment; filename="CAC-Certificate-${safeName}.pdf"`);
     return res.send(vasResult.buffer);
@@ -389,9 +452,28 @@ const downloadStatusReport = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Status report is only available after CAC approval.' });
     }
 
+    const safeName = (reg.registrationData?.proposedOption1 || transactionRef).replace(/[^a-zA-Z0-9-_]/g, '_');
+
+    if (process.env.NODE_ENV !== 'production') {
+      const pdf = _buildDevPdf([
+        'CAC STATUS REPORT',
+        '(SANDBOX TEST DOCUMENT - NOT FOR OFFICIAL USE)',
+        '',
+        `Business Name : ${reg.registrationData?.proposedOption1 || 'N/A'}`,
+        `RC Number     : ${reg.rcNumber || 'N/A'}`,
+        `TIN           : ${reg.tin || 'N/A'}`,
+        `Status        : APPROVED`,
+        `Ref           : ${transactionRef}`,
+        '',
+        'This document is generated for development testing only.',
+      ]);
+      res.set('Content-Type', 'application/pdf');
+      res.set('Content-Disposition', `attachment; filename="CAC-StatusReport-${safeName}.pdf"`);
+      return res.send(pdf);
+    }
+
     const vasRef    = reg.vasTransactionRef || transactionRef;
     const vasResult = await cacVasService.downloadStatusReport({ transactionRef: vasRef });
-    const safeName  = (reg.registrationData?.proposedOption1 || transactionRef).replace(/[^a-zA-Z0-9-_]/g, '_');
     res.set('Content-Type', vasResult.contentType);
     res.set('Content-Disposition', `attachment; filename="CAC-StatusReport-${safeName}.pdf"`);
     return res.send(vasResult.buffer);
