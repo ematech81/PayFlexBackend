@@ -242,14 +242,7 @@ const getRegistrationStatus = async (req, res) => {
     // VAS generates its own ref (VAS...) returned at submission time; fall
     // back to our internal ref only if it was never stored (old records).
     const TERMINAL = ['approved', 'failed', 'cancelled'];
-
-    // Skip polling if the user already submitted a query response.
-    // VAS continues to return 'queried' until a human CAC officer reviews
-    // the response (can take days), so polling would only flip status back
-    // to 'queried' repeatedly. We wait for the approval/rejection webhook.
-    const awaitingQueryReview = reg.status === 'queried' && !!reg.querySubmittedAt;
-
-    if (!TERMINAL.includes(reg.status) && !awaitingQueryReview) {
+    if (!TERMINAL.includes(reg.status)) {
       try {
         const vasRef    = reg.vasTransactionRef || transactionRef;
         const vasResult = await cacVasService.checkRegistrationStatus({ transactionRef: vasRef });
@@ -257,10 +250,24 @@ const getRegistrationStatus = async (req, res) => {
         const vasStatus = vasData?.status;
         const vasQueries = Array.isArray(vasData?.data) ? vasData.data : [];
 
-        // Persist any status or query update so future loads reflect live VAS state
+        // After a query response has been submitted, VAS may briefly return
+        // 'queried' or 'pending' while re-processing — don't let those
+        // intermediate values overwrite our state or cause oscillation.
+        // Only accept terminal statuses (approved/failed) at that point.
+        const isAfterQuerySubmit = reg.status === 'queried' && !!reg.querySubmittedAt;
+
         const updates = {};
-        if (vasStatus && vasStatus !== reg.status)   updates.status  = vasStatus;
-        if (vasQueries.length > 0)                   updates.queries = vasQueries;
+        if (vasStatus && vasStatus !== reg.status) {
+          if (!isAfterQuerySubmit || TERMINAL.includes(vasStatus)) {
+            updates.status = vasStatus;
+          }
+        }
+        // Don't overwrite stored queries after submission — only update
+        // queries before a response has been sent.
+        if (vasQueries.length > 0 && !isAfterQuerySubmit) {
+          updates.queries = vasQueries;
+        }
+
         if (Object.keys(updates).length > 0) {
           await CACRegistration.findByIdAndUpdate(reg._id, updates);
           Object.assign(reg, updates); // reflect in this response too
