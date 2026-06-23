@@ -63,6 +63,11 @@ const cacRegistrationSchema = new mongoose.Schema(
     webhookReceived:   { type: Boolean, default: false },
     webhookReceivedAt: { type: Date },
 
+    // Set when user submits a query response via resolveQuery.
+    // Used to show "Response Submitted — Awaiting Review" state and
+    // to skip VAS polling (we wait for a webhook instead).
+    querySubmittedAt: { type: Date },
+
     completedAt: { type: Date },
 
     // Links to the billing Transaction record

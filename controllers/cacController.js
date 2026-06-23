@@ -242,7 +242,14 @@ const getRegistrationStatus = async (req, res) => {
     // VAS generates its own ref (VAS...) returned at submission time; fall
     // back to our internal ref only if it was never stored (old records).
     const TERMINAL = ['approved', 'failed', 'cancelled'];
-    if (!TERMINAL.includes(reg.status)) {
+
+    // Skip polling if the user already submitted a query response.
+    // VAS continues to return 'queried' until a human CAC officer reviews
+    // the response (can take days), so polling would only flip status back
+    // to 'queried' repeatedly. We wait for the approval/rejection webhook.
+    const awaitingQueryReview = reg.status === 'queried' && !!reg.querySubmittedAt;
+
+    if (!TERMINAL.includes(reg.status) && !awaitingQueryReview) {
       try {
         const vasRef    = reg.vasTransactionRef || transactionRef;
         const vasResult = await cacVasService.checkRegistrationStatus({ transactionRef: vasRef });
@@ -312,11 +319,13 @@ const resubmitRegistration = async (req, res) => {
 
     const vasResult = await cacVasService.resolveQuery({ vasTransactionRef: vasRef, corrections });
 
-    // Persist the updated registration data; keep vasTransactionRef unchanged
-    // (VAS reuses the same ref for query resolutions — no new ref is issued).
-    reg.registrationData = { ...reg.registrationData, ...registrationData };
-    reg.status           = 'pending';
-    reg.webhookReceived  = false;
+    // Keep status as 'queried' — CAC hasn't reviewed the response yet.
+    // Setting it to 'pending' causes an oscillation loop: VAS still returns
+    // 'queried' when polled, so the backend flips it back immediately.
+    // Instead, stamp querySubmittedAt and wait for the approval webhook.
+    reg.registrationData  = { ...(reg.registrationData || {}), ...registrationData };
+    reg.querySubmittedAt  = new Date();
+    reg.webhookReceived   = false; // reset so the next webhook fires correctly
     await reg.save();
 
     return res.json({ success: true, message: 'Query response submitted. Awaiting CAC review.', transactionRef, vasStatus: vasResult });
