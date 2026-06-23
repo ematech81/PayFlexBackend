@@ -143,13 +143,15 @@ const generateMemoObjects = async (req, res) => {
     //   { data: ["obj1", "obj2"] }           → data is the array directly
     //   { data: { objectsOfMem: [...] } }    → nested under objectsOfMem
     //   { objectsOfMem: [...] }              → at root
-    console.log('[cac-llc] generateMemoObjects raw VAS response:', JSON.stringify(vasResult).substring(0, 500));
-    const raw     = vasResult?.data;
-    const objects = Array.isArray(raw)
-      ? raw
-      : (raw?.objectsOfMem || vasResult?.objectsOfMem || []);
+    console.log('[cac-llc] generateMemoObjects raw VAS response:', JSON.stringify(vasResult).substring(0, 600));
+    // VAS wraps response as { data: { data: { objectsOfMem, shareInfo } } }
+    const inner   = vasResult?.data?.data || vasResult?.data || vasResult;
+    const objects = Array.isArray(inner)
+      ? inner
+      : (inner?.objectsOfMem || []);
+    const shareInfo = inner?.shareInfo || null;
 
-    return res.json({ success: true, objectsOfMem: objects });
+    return res.json({ success: true, objectsOfMem: objects, shareInfo });
   } catch (err) {
     console.error('[cac-llc] generateMemoObjects error:', err.message);
     return res.status(err.statusCode || 502).json({ success: false, message: err.message });
@@ -170,20 +172,22 @@ const analyseMemoObjects = async (req, res) => {
   if (!session) return res.status(404).json({ success: false, message: 'LLC session not found.' });
 
   try {
-    const vasResult        = await cacLlcVas.analyseMemoObjects({ objects });
-    const minShareCapital  = vasResult?.shareInfo?.minimumShareCapital
-                          || vasResult?.data?.shareInfo?.minimumShareCapital
-                          || null;
+    const vasResult = await cacLlcVas.analyseMemoObjects({ objects });
+    console.log('[cac-llc] analyseMemoObjects raw VAS response:', JSON.stringify(vasResult).substring(0, 600));
+
+    // Same double-nested shape as generate-objects: { data: { data: { shareInfo, ... } } }
+    const inner          = vasResult?.data?.data || vasResult?.data || vasResult;
+    const minShareCapital = inner?.shareInfo?.minimumShareCapital ?? null;
 
     await CacLlcSession.findByIdAndUpdate(sessionId, {
       objectsOfMem:     objects,
       objectsAnalysed:  true,
-      analysisResult:   vasResult,
+      analysisResult:   inner,
       status:           'memorandum_done',
       ...(minShareCapital !== null && { minimumShareCapital: minShareCapital }),
     });
 
-    return res.json({ success: true, minimumShareCapital: minShareCapital, analysisResult: vasResult });
+    return res.json({ success: true, minimumShareCapital: minShareCapital, analysisResult: inner });
   } catch (err) {
     console.error('[cac-llc] analyseMemoObjects error:', err.message);
     return res.status(err.statusCode || 502).json({ success: false, message: err.message });
