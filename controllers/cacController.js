@@ -750,8 +750,10 @@ const checkCompliance = async (req, res) => {
   }
 
   try {
+    const cleanName = String(proposedName).trim();
+    console.log('[cac] checkCompliance payload → proposedName:', JSON.stringify(cleanName), '| lineOfBusiness:', JSON.stringify(lineOfBusiness || ''));
     const vasResult = await cacVasService.bnCompliance({
-      proposedName:   String(proposedName).trim(),
+      proposedName:   cleanName,
       lineOfBusiness: lineOfBusiness ? String(lineOfBusiness).trim() : '',
     });
     return res.json({ success: true, data: vasResult });
