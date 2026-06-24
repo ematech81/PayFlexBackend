@@ -89,7 +89,9 @@ async function _post(path, body = {}) {
  * Returns: { reservationCode, expiryDate }
  */
 async function reserveName({ proposedName, companyTypes }) {
-  return _post('/api/vas/llc/name-reservation', { proposedName, companyTypes });
+  const payload = { proposedName, companyTypes };
+  console.log('[cac-llc] reserveName payload:', JSON.stringify(payload));
+  return _post('/api/vas/llc/name-reservation', payload);
 }
 
 /**
