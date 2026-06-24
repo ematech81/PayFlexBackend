@@ -89,7 +89,11 @@ async function _post(path, body = {}) {
  * Returns: { reservationCode, expiryDate }
  */
 async function reserveName({ proposedName, companyTypes }) {
-  const payload = { proposedName, companyTypes };
+  // VAS expects companyTypes as an array even for a single type
+  const payload = {
+    proposedName,
+    companyTypes: Array.isArray(companyTypes) ? companyTypes : [companyTypes],
+  };
   console.log('[cac-llc] reserveName payload:', JSON.stringify(payload));
   return _post('/api/vas/llc/name-reservation', payload);
 }
