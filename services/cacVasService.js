@@ -319,7 +319,7 @@ async function bnCompliance({ proposedName, lineOfBusiness }) {
   if (lineOfBusiness && String(lineOfBusiness).trim()) {
     body.lineOfBusiness = String(lineOfBusiness).trim();
   }
-  return _post('/api/vas/engine/pre/bn-compliance', body);
+  return _post('/api/vas/engine/pre/bn-compliance?advanceCheck=true', body);
 }
 
 /**
