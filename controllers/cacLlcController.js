@@ -380,15 +380,56 @@ const registerAffiliate = async (req, res) => {
   }
 
   try {
-    const vasAffiliate = {
-      ...affiliateData,
-      affiliateType,
-      isShareholder,
-      ...(isShareholder && shareAllotment && { shareAllotment }),
-    };
+    // Map frontend field names → VAS field names and normalise address shape
+    const mapAddr = (a) => ({
+      country:    'Nigeria',
+      state:      a?.state    || '',
+      lga:        a?.lga      || '',
+      city:       a?.city     || '',
+      streetInfo: a?.street   || a?.streetInfo || '',
+    });
+    const affiliateTypeArr = Array.isArray(affiliateType) ? affiliateType : [affiliateType];
+
+    let vasAffiliate;
+    if (affiliateMode === 'individual') {
+      vasAffiliate = {
+        surname:            affiliateData.surname,
+        firstname:          affiliateData.firstname,
+        otherName:          affiliateData.othername   || affiliateData.otherName || '',
+        occupation:         affiliateData.occupation  || '',
+        nationality:        affiliateData.nationality || 'Nigerian',
+        dob:                affiliateData.dob,
+        gender:             affiliateData.gender,
+        email:              affiliateData.email,
+        phoneNumber:        affiliateData.phone       || affiliateData.phoneNumber,
+        affiliateType:      affiliateTypeArr,
+        serviceAddress:     mapAddr(affiliateData.serviceAddress),
+        residentialAddress: mapAddr(affiliateData.residentialAddress),
+        meansOfId:          affiliateData.meansOfId,
+        signature:          affiliateData.signature,
+        passport:           affiliateData.passport,
+        isShareholder,
+        ...(isShareholder && shareAllotment && { shareAllotment }),
+      };
+    } else {
+      vasAffiliate = {
+        isForeign:          affiliateData.isForeign          || false,
+        isGovernmentAgency: affiliateData.isGovernmentAgency || false,
+        rcNumber:           affiliateData.rcNumber,
+        companyName:        affiliateData.companyName,
+        contactPhoneNumber: affiliateData.contactPhone       || affiliateData.contactPhoneNumber,
+        contactEmail:       affiliateData.contactEmail,
+        contactSignature:   affiliateData.signature          || affiliateData.contactSignature,
+        affiliateType:      affiliateTypeArr,
+        serviceAddress:     mapAddr(affiliateData.serviceAddress),
+        isShareholder,
+        ...(isShareholder && shareAllotment && { shareAllotment }),
+      };
+    }
 
     const vasResult = await cacLlcVas.registerAffiliate({
       transactionRef: session.vasTransactionRef,
+      affiliateMode,
       affiliate:      vasAffiliate,
     });
 

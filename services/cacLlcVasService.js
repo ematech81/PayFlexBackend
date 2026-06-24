@@ -137,10 +137,11 @@ async function registerShares({ transactionRef, ordinaryIssuedShare, pricePerSha
 
 /**
  * Step 6 — Register an affiliate (individual or corporate).
- * affiliate object is spread directly into the request body alongside transactionRef.
+ * VAS requires the affiliate object nested under "individual" or "corporate" key.
  */
-async function registerAffiliate({ transactionRef, affiliate }) {
-  return _post('/api/vas/llc/affiliates', { transactionRef, ...affiliate });
+async function registerAffiliate({ transactionRef, affiliateMode, affiliate }) {
+  const key = affiliateMode === 'corporate' ? 'corporate' : 'individual';
+  return _post('/api/vas/llc/affiliates', { transactionRef, [key]: affiliate });
 }
 
 module.exports = {
