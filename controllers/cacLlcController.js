@@ -232,6 +232,14 @@ const createCompany = async (req, res) => {
   try {
     const cleanObjects = (objectsOfMem || session.objectsOfMem || []).filter(o => typeof o === 'string' && o.trim());
 
+    // VAS requires local Nigerian format (10–15 digits, no +234 prefix)
+    let normalizedPhone = String(phoneNumber || '').replace(/\s+/g, '');
+    if (normalizedPhone.startsWith('+234')) {
+      normalizedPhone = '0' + normalizedPhone.slice(4);
+    } else if (/^234\d{9,10}$/.test(normalizedPhone)) {
+      normalizedPhone = '0' + normalizedPhone.slice(3);
+    }
+
     const createPayload = {
       reservationCode:         session.reservationCode,
       companyType:             session.companyType,
@@ -239,7 +247,7 @@ const createCompany = async (req, res) => {
       natureOfBusiness,
       principalActivityDescription,
       companyEmail,
-      phoneNumber,
+      phoneNumber:             normalizedPhone,
       companyAddress,
       objectsOfMem: cleanObjects,
     };
