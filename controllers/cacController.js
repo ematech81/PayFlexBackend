@@ -784,12 +784,17 @@ const checkCompliance = async (req, res) => {
   try {
     console.log('[cac] checkCompliance names:', JSON.stringify(names), '| advanceCheck:', advanceCheck);
 
-    const vasResults = await Promise.all(
+    // allSettled so one name's VAS failure doesn't cancel the other
+    const settled = await Promise.allSettled(
       names.map(name => cacVasService.bnCompliance({ proposedName: name, lineOfBusiness: cleanLob, advanceCheck: !!advanceCheck }))
     );
 
-    vasResults.forEach((r, i) => {
-      console.log(`[cac] checkCompliance VAS[${i}] (${names[i]}):`, JSON.stringify(r).substring(0, 400));
+    settled.forEach((s, i) => {
+      if (s.status === 'fulfilled') {
+        console.log(`[cac] checkCompliance VAS[${i}] (${names[i]}):`, JSON.stringify(s.value).substring(0, 400));
+      } else {
+        console.warn(`[cac] checkCompliance VAS[${i}] (${names[i]}) failed:`, s.reason?.message);
+      }
     });
 
     if (txn) {
@@ -800,10 +805,13 @@ const checkCompliance = async (req, res) => {
       success:      true,
       advanceCheck: !!advanceCheck,
       newBalance:   user ? user.walletBalance : undefined,
-      results:      vasResults.map((data, i) => ({ name: names[i], data })),
+      results:      settled.map((s, i) => s.status === 'fulfilled'
+        ? { name: names[i], data: s.value }
+        : { name: names[i], error: true }
+      ),
     });
   } catch (err) {
-    console.error('[cac] checkCompliance error:', err.message);
+    console.error('[cac] checkCompliance unexpected error:', err.message);
 
     if (user && txn) {
       const { refundWalletBalance } = require('../util/paymentHelper');
@@ -811,12 +819,6 @@ const checkCompliance = async (req, res) => {
       await Transaction.findByIdAndUpdate(txn._id, { status: 'failed', failureReason: err.message }).catch(() => {});
     }
 
-    if (err.statusCode === 403) {
-      return res.json({
-        success: true, unavailable: true,
-        message: 'Compliance check is not enabled for your VAS account. You can still proceed with registration.',
-      });
-    }
     return res.status(err.statusCode || 502).json({ success: false, message: err.message });
   }
 };
