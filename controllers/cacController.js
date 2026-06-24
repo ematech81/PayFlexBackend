@@ -740,22 +740,25 @@ const ADVANCE_COMPLIANCE_FEE = 100;
 
 // ─── POST /api/cac/compliance ─────────────────────────────────────────────────
 // Free or paid BN compliance pre-check.
-// advanceCheck=true → deducts ₦100, calls VAS with advanceCheck=true for
-// deeper similarity scoring, suggested names, and recommended actions.
+// Accepts { names: [name1, name2], lineOfBusiness, advanceCheck } — both names
+// are checked in one request; advanced check deducts ₦100 flat (not per name).
 const checkCompliance = async (req, res) => {
   if (!featureEnabled()) {
     return res.status(503).json({ success: false, message: 'CAC services are temporarily unavailable.' });
   }
 
-  const { proposedName, lineOfBusiness, advanceCheck = false } = req.body;
-  if (!proposedName || !String(proposedName).trim()) {
-    return res.status(400).json({ success: false, message: 'proposedName is required.' });
+  const { names: namesInput, lineOfBusiness, advanceCheck = false } = req.body;
+  const names = (Array.isArray(namesInput) ? namesInput : [namesInput])
+    .map(n => String(n || '').trim())
+    .filter(Boolean);
+
+  if (!names.length) {
+    return res.status(400).json({ success: false, message: 'At least one name is required.' });
   }
 
-  const cleanName = String(proposedName).trim();
-  const cleanLob  = lineOfBusiness ? String(lineOfBusiness).trim() : '';
+  const cleanLob = lineOfBusiness ? String(lineOfBusiness).trim() : '';
 
-  // ── Advanced check: deduct ₦100 upfront ──────────────────────────────────
+  // ── Advanced check: deduct ₦100 ONCE regardless of how many names ─────────
   let user = null;
   let txn  = null;
   if (advanceCheck) {
@@ -779,28 +782,29 @@ const checkCompliance = async (req, res) => {
   }
 
   try {
-    console.log('[cac] checkCompliance payload → proposedName:', JSON.stringify(cleanName), '| advanceCheck:', advanceCheck);
-    const vasResult = await cacVasService.bnCompliance({
-      proposedName:   cleanName,
-      lineOfBusiness: cleanLob,
-      advanceCheck:   !!advanceCheck,
+    console.log('[cac] checkCompliance names:', JSON.stringify(names), '| advanceCheck:', advanceCheck);
+
+    const vasResults = await Promise.all(
+      names.map(name => cacVasService.bnCompliance({ proposedName: name, lineOfBusiness: cleanLob, advanceCheck: !!advanceCheck }))
+    );
+
+    vasResults.forEach((r, i) => {
+      console.log(`[cac] checkCompliance VAS[${i}] (${names[i]}):`, JSON.stringify(r).substring(0, 400));
     });
-    console.log('[cac] checkCompliance VAS response:', JSON.stringify(vasResult).substring(0, 600));
 
     if (txn) {
       await Transaction.findByIdAndUpdate(txn._id, { status: 'success' });
     }
 
     return res.json({
-      success:     true,
-      advanceCheck:!!advanceCheck,
-      newBalance:  user ? user.walletBalance : undefined,
-      data:        vasResult,
+      success:      true,
+      advanceCheck: !!advanceCheck,
+      newBalance:   user ? user.walletBalance : undefined,
+      results:      vasResults.map((data, i) => ({ name: names[i], data })),
     });
   } catch (err) {
     console.error('[cac] checkCompliance error:', err.message);
 
-    // Refund on VAS failure for paid checks
     if (user && txn) {
       const { refundWalletBalance } = require('../util/paymentHelper');
       await refundWalletBalance(user, ADVANCE_COMPLIANCE_FEE).catch(() => {});
