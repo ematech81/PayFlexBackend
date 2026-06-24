@@ -756,6 +756,7 @@ const checkCompliance = async (req, res) => {
       proposedName:   cleanName,
       lineOfBusiness: lineOfBusiness ? String(lineOfBusiness).trim() : '',
     });
+    console.log('[cac] checkCompliance VAS response:', JSON.stringify(vasResult).substring(0, 600));
     return res.json({ success: true, data: vasResult });
   } catch (err) {
     console.error('[cac] checkCompliance error:', err.message);
