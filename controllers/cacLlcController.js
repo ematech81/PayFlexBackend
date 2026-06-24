@@ -175,9 +175,11 @@ const analyseMemoObjects = async (req, res) => {
     const vasResult = await cacLlcVas.analyseMemoObjects({ objects });
     console.log('[cac-llc] analyseMemoObjects raw VAS response:', JSON.stringify(vasResult).substring(0, 600));
 
-    // Same double-nested shape as generate-objects: { data: { data: { shareInfo, ... } } }
-    const inner          = vasResult?.data?.data || vasResult?.data || vasResult;
-    const minShareCapital = inner?.shareInfo?.minimumShareCapital ?? null;
+    // VAS response: { data: { success: { companyTypes, shareInfo: { data: { minimumShareCapital } } } } }
+    const inner           = vasResult?.data?.success || vasResult?.data || vasResult;
+    const minShareCapital = inner?.shareInfo?.data?.minimumShareCapital
+                         ?? inner?.shareInfo?.minimumShareCapital
+                         ?? null;
 
     await CacLlcSession.findByIdAndUpdate(sessionId, {
       objectsOfMem:     objects,
