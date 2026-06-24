@@ -767,12 +767,13 @@ const checkCompliance = async (req, res) => {
         message: `Insufficient balance. You need ₦${ADVANCE_COMPLIANCE_FEE} for the advanced compliance check.`,
       });
     }
+    const ref = `CAC-COMP-${Date.now()}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
     txn = await Transaction.create({
-      userId:      user._id,
-      amount:      ADVANCE_COMPLIANCE_FEE,
-      type:        'cac_compliance',
-      status:      'pending',
-      description: `Advanced BN compliance check — ${cleanName}`,
+      userId:    user._id,
+      amount:    ADVANCE_COMPLIANCE_FEE,
+      type:      'cac_compliance',
+      status:    'pending',
+      reference: ref,
     });
     await deductWalletBalance(user, ADVANCE_COMPLIANCE_FEE);
   }
