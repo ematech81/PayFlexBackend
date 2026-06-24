@@ -458,20 +458,73 @@ const registerAffiliate = async (req, res) => {
       status: sharesBalanced ? 'affiliates_complete' : 'shares_registered',
     });
 
+    const affiliateKey = vasResult?.data?.affiliateKey || null;
+
     return res.json({
-      success:         true,
-      affiliateId:     affiliateDoc._id,
-      totalAllocated:  newTotalAlloc,
+      success:        true,
+      affiliateId:    affiliateDoc._id,
+      affiliateKey,
+      totalAllocated: newTotalAlloc,
       sharesRemaining,
       sharesBalanced,
-      // TODO Step 7: Register PSC — pending docs
-      // TODO Step 8: Validate, Pay and Submit — pending docs
       message: sharesBalanced
-        ? 'Affiliate registered. All shares are now allocated. Steps 7–8 (PSC & submission) coming soon.'
+        ? 'Affiliate registered. All shares are now allocated. Proceed to Step 7 (PSC registration).'
         : `Affiliate registered. ${sharesRemaining.toLocaleString()} shares still unallocated.`,
     });
   } catch (err) {
     console.error('[cac-llc] registerAffiliate error:', err.message);
+    return res.status(err.statusCode || 502).json({ success: false, message: err.message });
+  }
+};
+
+// ─── Step 7: POST /api/cac/llc/psc ──────────────────────────────────────────
+const registerPsc = async (req, res) => {
+  if (!featureEnabled()) {
+    return res.status(503).json({ success: false, message: 'CAC services are temporarily unavailable.' });
+  }
+
+  const {
+    sessionId, affiliateKey,
+    ownsDirectShares = true, directShareDetails,
+    ownsIndirectShares = false, indirectShareDetails,
+    isPep = false, isPscAffiliated = false,
+    canChangeDirectors = true, hasSignificantControlOfCompany = true,
+  } = req.body;
+
+  if (!sessionId)    return res.status(400).json({ success: false, message: 'sessionId is required.' });
+  if (!affiliateKey) return res.status(400).json({ success: false, message: 'affiliateKey is required.' });
+
+  const session = await CacLlcSession.findOne({ _id: sessionId, userId: req.user.id });
+  if (!session) return res.status(404).json({ success: false, message: 'LLC session not found.' });
+  if (!['affiliates_complete', 'psc_registered'].includes(session.status)) {
+    return res.status(400).json({
+      success: false,
+      message: `All shares must be allocated before registering PSC. Current status: ${session.status}`,
+    });
+  }
+
+  try {
+    const vasResult = await cacLlcVas.registerPsc({
+      transactionRef: session.vasTransactionRef,
+      affiliateKey,
+      ownsDirectShares, directShareDetails,
+      ownsIndirectShares, indirectShareDetails,
+      isPep, isPscAffiliated, canChangeDirectors, hasSignificantControlOfCompany,
+    });
+
+    console.log('[cac-llc] registerPsc VAS response:', JSON.stringify(vasResult).substring(0, 300));
+
+    const pscKey = vasResult?.data?.affiliateKey || null;
+
+    await CacLlcSession.findByIdAndUpdate(sessionId, { status: 'psc_registered' });
+
+    return res.json({
+      success: true,
+      pscKey,
+      message: vasResult?.message || 'PSC registered successfully.',
+    });
+  } catch (err) {
+    console.error('[cac-llc] registerPsc error:', err.message);
     return res.status(err.statusCode || 502).json({ success: false, message: err.message });
   }
 };
@@ -513,6 +566,7 @@ module.exports = {
   createCompany,
   registerShares,
   registerAffiliate,
+  registerPsc,
   getLlcSession,
   getLlcHistory,
 };

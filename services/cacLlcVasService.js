@@ -144,6 +144,31 @@ async function registerAffiliate({ transactionRef, affiliateMode, affiliate }) {
   return _post('/api/vas/llc/affiliates', { transactionRef, [key]: affiliate });
 }
 
+/**
+ * Step 7 — Register a Person with Significant Control (PSC).
+ * affiliateKey comes from the registerAffiliate response (data.affiliateKey).
+ */
+async function registerPsc({
+  transactionRef, affiliateKey,
+  ownsDirectShares, directShareDetails,
+  ownsIndirectShares, indirectShareDetails,
+  isPep, isPscAffiliated, canChangeDirectors, hasSignificantControlOfCompany,
+}) {
+  const body = {
+    transactionRef,
+    affiliateKey,
+    ownsDirectShares:              !!ownsDirectShares,
+    ownsIndirectShares:            !!ownsIndirectShares,
+    isPep:                         !!isPep,
+    isPscAffiliated:               !!isPscAffiliated,
+    canChangeDirectors:            !!canChangeDirectors,
+    hasSignificantControlOfCompany: !!hasSignificantControlOfCompany,
+    ...(ownsDirectShares   && directShareDetails   && { directShareDetails }),
+    ...(ownsIndirectShares && indirectShareDetails && { indirectShareDetails }),
+  };
+  return _post('/api/vas/llc/psc', body);
+}
+
 module.exports = {
   reserveName,
   generateMemoObjects,
@@ -151,4 +176,5 @@ module.exports = {
   createCompany,
   registerShares,
   registerAffiliate,
+  registerPsc,
 };
