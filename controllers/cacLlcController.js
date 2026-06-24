@@ -2,9 +2,18 @@
 
 const CacLlcSession   = require('../models/CacLlcSession');
 const CacLlcAffiliate = require('../models/CacLlcAffiliate');
+const Transaction     = require('../models/transaction');
+const User            = require('../models/user');
 const cacLlcVas       = require('../services/cacLlcVasService');
+const { deductWalletBalance, refundWalletBalance } = require('../util/paymentHelper');
 
 const featureEnabled = () => process.env.FEATURE_CAC_ENABLED !== 'false';
+
+// CAC statutory fee: ₦1,000 base + 1% of share capital (minimum ₦10,000 rate)
+const calcLlcFee = (shareCapital) => {
+  const rate = Math.max(10_000, Math.floor(Number(shareCapital || 0) / 100));
+  return 1_000 + rate;
+};
 
 const VALID_COMPANY_TYPES = [
   'PRIVATE_COMPANY_LIMITED_BY_SHARES',
@@ -529,6 +538,91 @@ const registerPsc = async (req, res) => {
   }
 };
 
+// ─── Step 8: POST /api/cac/llc/submit ────────────────────────────────────────
+const submitRegistration = async (req, res) => {
+  if (!featureEnabled()) {
+    return res.status(503).json({ success: false, message: 'CAC services are temporarily unavailable.' });
+  }
+
+  const { sessionId } = req.body;
+  if (!sessionId) return res.status(400).json({ success: false, message: 'sessionId is required.' });
+
+  const session = await CacLlcSession.findOne({ _id: sessionId, userId: req.user.id });
+  if (!session) return res.status(404).json({ success: false, message: 'LLC session not found.' });
+  if (!['psc_registered'].includes(session.status)) {
+    return res.status(400).json({
+      success: false,
+      message: `PSC must be registered before submitting. Current status: ${session.status}`,
+    });
+  }
+  if (!session.vasTransactionRef) {
+    return res.status(400).json({ success: false, message: 'No VAS transaction reference found. Please restart the registration.' });
+  }
+
+  const fee = calcLlcFee(session.shareCapital || 0);
+
+  const user = await User.findById(req.user.id).select('+walletBalance');
+  if ((user.walletBalance || 0) < fee) {
+    return res.status(400).json({
+      success: false,
+      message: `Insufficient wallet balance. Registration fee is ₦${fee.toLocaleString()}. Your balance is ₦${(user.walletBalance || 0).toLocaleString()}.`,
+    });
+  }
+
+  const ref = `LLC-REG-${Date.now()}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
+  const txn = await Transaction.create({
+    userId:    user._id,
+    amount:    fee,
+    type:      'cac_registration',
+    status:    'pending',
+    reference: ref,
+    metadata:  { sessionId: String(session._id), vasTransactionRef: session.vasTransactionRef },
+  });
+
+  await deductWalletBalance(user, fee);
+
+  try {
+    const vasResult = await cacLlcVas.submitRegistration({ transactionRef: session.vasTransactionRef });
+    console.log('[cac-llc] submitRegistration VAS response:', JSON.stringify(vasResult).substring(0, 500));
+
+    const actualFee    = vasResult?.statutoryPayment?.statutoryFee || fee;
+    const vasRegId     = vasResult?.id || null;
+    const regStatus    = vasResult?.metrics?.status || 'PENDING';
+    const companyName  = vasResult?.registration?.proposedName || session.companyName || '';
+
+    // Refund the difference if VAS charged less than we estimated
+    if (actualFee < fee) {
+      const diff = fee - actualFee;
+      await refundWalletBalance(user, diff).catch(() => {});
+      await Transaction.findByIdAndUpdate(txn._id, { amount: actualFee, status: 'success' });
+    } else {
+      await Transaction.findByIdAndUpdate(txn._id, { status: 'success' });
+    }
+
+    await CacLlcSession.findByIdAndUpdate(sessionId, {
+      status:           'submitted',
+      vasRegistrationId: vasRegId,
+      submittedAt:      new Date(),
+    });
+
+    return res.json({
+      success:            true,
+      vasRegistrationId:  vasRegId,
+      transactionRef:     session.vasTransactionRef,
+      companyName,
+      status:             regStatus,
+      statutoryFee:       actualFee,
+      newBalance:         user.walletBalance,
+      message:            'Company registration submitted successfully. Status: PENDING review by CAC.',
+    });
+  } catch (err) {
+    await refundWalletBalance(user, fee).catch(() => {});
+    await Transaction.findByIdAndUpdate(txn._id, { status: 'failed' }).catch(() => {});
+    console.error('[cac-llc] submitRegistration error:', err.message);
+    return res.status(err.statusCode || 502).json({ success: false, message: err.message });
+  }
+};
+
 // ─── GET /api/cac/llc/registration/:sessionId ────────────────────────────────
 const getLlcSession = async (req, res) => {
   try {
@@ -567,6 +661,7 @@ module.exports = {
   registerShares,
   registerAffiliate,
   registerPsc,
+  submitRegistration,
   getLlcSession,
   getLlcHistory,
 };

@@ -58,6 +58,7 @@ const {
   getLlcSession,
   getLlcHistory,
   registerPsc,
+  submitRegistration,
 } = require('../controllers/cacLlcController');
 
 router.post('/llc/name-reservation',        protect, nameReservation);
@@ -67,6 +68,7 @@ router.post('/llc/company',                 protect, createCompany);
 router.post('/llc/shares',                  protect, registerShares);
 router.post('/llc/affiliate',               protect, registerAffiliate);
 router.post('/llc/psc',                     protect, registerPsc);
+router.post('/llc/submit',                  protect, submitRegistration);
 router.get('/llc/registration/:sessionId',  protect, getLlcSession);
 router.get('/llc/history',                  protect, getLlcHistory);
 

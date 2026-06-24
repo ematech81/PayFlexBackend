@@ -169,6 +169,14 @@ async function registerPsc({
   return _post('/api/vas/llc/psc', body);
 }
 
+/**
+ * Step 8 — Submit the full registration to CAC.
+ * Body is just { transactionRef }. VAS handles payment from our credits.
+ */
+async function submitRegistration({ transactionRef }) {
+  return _post('/api/vas/llc/register', { transactionRef });
+}
+
 module.exports = {
   reserveName,
   generateMemoObjects,
@@ -177,4 +185,5 @@ module.exports = {
   registerShares,
   registerAffiliate,
   registerPsc,
+  submitRegistration,
 };
