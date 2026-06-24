@@ -62,9 +62,7 @@ async function _post(path, body = {}) {
         `[CAC LLC VAS] POST failed (attempt ${attempt}/${MAX_RETRIES}): HTTP ${httpStatus ?? '(no response)'}`,
         _redactKey(err.message)
       );
-      if (rawBody) {
-        console.warn('[CAC LLC VAS] Response body:', JSON.stringify(rawBody).substring(0, 500));
-      }
+      console.warn('[CAC LLC VAS] Response body:', rawBody != null ? JSON.stringify(rawBody).substring(0, 500) : '(empty)');
       lastErr = err;
       if (!isRetryable || attempt === MAX_RETRIES) break;
       await _sleep(attempt * 1_000);
@@ -89,11 +87,7 @@ async function _post(path, body = {}) {
  * Returns: { reservationCode, expiryDate }
  */
 async function reserveName({ proposedName, companyTypes }) {
-  // VAS expects companyTypes as an array even for a single type
-  const payload = {
-    proposedName,
-    companyTypes: Array.isArray(companyTypes) ? companyTypes : [companyTypes],
-  };
+  const payload = { proposedName, companyTypes };
   console.log('[cac-llc] reserveName payload:', JSON.stringify(payload));
   return _post('/api/vas/llc/name-reservation', payload);
 }
