@@ -736,42 +736,82 @@ const devForceApprove = async (req, res) => {
   }
 };
 
+const ADVANCE_COMPLIANCE_FEE = 100;
+
 // ─── POST /api/cac/compliance ─────────────────────────────────────────────────
-// Free BN compliance pre-check (no wallet deduction).
-// Returns statusCode, message, recommendedActions, suggestedNames, similarNames.
+// Free or paid BN compliance pre-check.
+// advanceCheck=true → deducts ₦100, calls VAS with advanceCheck=true for
+// deeper similarity scoring, suggested names, and recommended actions.
 const checkCompliance = async (req, res) => {
   if (!featureEnabled()) {
     return res.status(503).json({ success: false, message: 'CAC services are temporarily unavailable.' });
   }
 
-  const { proposedName, lineOfBusiness } = req.body;
+  const { proposedName, lineOfBusiness, advanceCheck = false } = req.body;
   if (!proposedName || !String(proposedName).trim()) {
     return res.status(400).json({ success: false, message: 'proposedName is required.' });
   }
 
+  const cleanName = String(proposedName).trim();
+  const cleanLob  = lineOfBusiness ? String(lineOfBusiness).trim() : '';
+
+  // ── Advanced check: deduct ₦100 upfront ──────────────────────────────────
+  let user = null;
+  let txn  = null;
+  if (advanceCheck) {
+    user = await User.findById(req.user.id).select('+walletBalance');
+    if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
+    if ((user.walletBalance || 0) < ADVANCE_COMPLIANCE_FEE) {
+      return res.status(400).json({
+        success: false,
+        message: `Insufficient balance. You need ₦${ADVANCE_COMPLIANCE_FEE} for the advanced compliance check.`,
+      });
+    }
+    txn = await Transaction.create({
+      userId:      user._id,
+      amount:      ADVANCE_COMPLIANCE_FEE,
+      type:        'cac_compliance',
+      status:      'pending',
+      description: `Advanced BN compliance check — ${cleanName}`,
+    });
+    await deductWalletBalance(user, ADVANCE_COMPLIANCE_FEE);
+  }
+
   try {
-    const cleanName = String(proposedName).trim();
-    console.log('[cac] checkCompliance payload → proposedName:', JSON.stringify(cleanName), '| lineOfBusiness:', JSON.stringify(lineOfBusiness || ''));
+    console.log('[cac] checkCompliance payload → proposedName:', JSON.stringify(cleanName), '| advanceCheck:', advanceCheck);
     const vasResult = await cacVasService.bnCompliance({
       proposedName:   cleanName,
-      lineOfBusiness: lineOfBusiness ? String(lineOfBusiness).trim() : '',
+      lineOfBusiness: cleanLob,
+      advanceCheck:   !!advanceCheck,
     });
     console.log('[cac] checkCompliance VAS response:', JSON.stringify(vasResult).substring(0, 600));
-    return res.json({ success: true, data: vasResult });
+
+    if (txn) {
+      await Transaction.findByIdAndUpdate(txn._id, { status: 'success' });
+    }
+
+    return res.json({
+      success:     true,
+      advanceCheck:!!advanceCheck,
+      newBalance:  user ? user.walletBalance : undefined,
+      data:        vasResult,
+    });
   } catch (err) {
     console.error('[cac] checkCompliance error:', err.message);
 
-    // 403 from VAS = compliance endpoint not enabled for this API key.
-    // Return 200 with a structured not-available response so the frontend
-    // can degrade gracefully — compliance check is optional, not a blocker.
-    if (err.statusCode === 403 || err.response?.status === 403) {
-      return res.json({
-        success: true,
-        unavailable: true,
-        message: 'Compliance check is not enabled for your VAS account. Please contact your VAS provider to activate this feature. You can still proceed with registration.',
-      });
+    // Refund on VAS failure for paid checks
+    if (user && txn) {
+      const { refundWalletBalance } = require('../util/paymentHelper');
+      await refundWalletBalance(user, ADVANCE_COMPLIANCE_FEE).catch(() => {});
+      await Transaction.findByIdAndUpdate(txn._id, { status: 'failed', failureReason: err.message }).catch(() => {});
     }
 
+    if (err.statusCode === 403) {
+      return res.json({
+        success: true, unavailable: true,
+        message: 'Compliance check is not enabled for your VAS account. You can still proceed with registration.',
+      });
+    }
     return res.status(err.statusCode || 502).json({ success: false, message: err.message });
   }
 };

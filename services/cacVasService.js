@@ -314,12 +314,15 @@ async function generateTIN({ rcNumber }) {
  * Free — no wallet deduction.
  * Returns statusCode, message, recommendedActions, suggestedNames, similarNames.
  */
-async function bnCompliance({ proposedName, lineOfBusiness }) {
+async function bnCompliance({ proposedName, lineOfBusiness, advanceCheck = false }) {
   const body = { proposedName };
   if (lineOfBusiness && String(lineOfBusiness).trim()) {
     body.lineOfBusiness = String(lineOfBusiness).trim();
   }
-  return _post('/api/vas/engine/pre/bn-compliance?advanceCheck=true', body);
+  const path = advanceCheck
+    ? '/api/vas/engine/pre/bn-compliance?advanceCheck=true'
+    : '/api/vas/engine/pre/bn-compliance';
+  return _post(path, body);
 }
 
 /**
