@@ -661,20 +661,21 @@ const handleWebhook = async (req, res) => {
       return res.status(400).json({ success: false, message: 'transactionRef is required.' });
     }
 
-    const reg = await CACRegistration.findOne({ transactionRef });
-    if (!reg) {
-      console.warn(`[cac] Webhook for unknown transactionRef: ${transactionRef}`);
-      return res.status(404).json({ success: false, message: 'Registration not found.' });
-    }
+    // Atomic idempotency: claim the webhook only if not yet processed.
+    // findOneAndUpdate with webhookReceived:false ensures two simultaneous
+    // webhooks cannot both slip through the read-then-write window.
+    const reg = await CACRegistration.findOneAndUpdate(
+      { transactionRef, webhookReceived: false },
+      { $set: { webhookReceived: true, webhookReceivedAt: new Date() } },
+      { new: true }
+    );
 
-    // Idempotency guard
-    if (reg.webhookReceived) {
-      console.log(`[cac] Duplicate webhook for ${transactionRef} — ignoring`);
+    if (!reg) {
+      // Either unknown transactionRef or already processed — always 200 to VAS
+      // so we don't leak information about valid refs via 404 responses.
+      console.log(`[cac] Webhook for ${transactionRef} — not found or already processed`);
       return res.status(200).json({ success: true, message: 'Already processed.' });
     }
-
-    reg.webhookReceived   = true;
-    reg.webhookReceivedAt = new Date();
 
     if (status === 'approved') {
       reg.status         = 'approved';

@@ -61,42 +61,52 @@ const validateWalletBalance = (user, amount) => {
 };
 
 /**
- * Deduct amount from user's wallet balance
- * @param {Object} user - User object
- * @param {number} amount - Amount to deduct
- * @param {Object} session - Optional MongoDB session for transactions
- * @returns {Promise<number>} New wallet balance
+ * Atomically deduct amount from user's wallet balance using $inc.
+ * The { walletBalance: { $gte: amount } } condition makes the balance check
+ * and the deduction a single atomic DB operation — concurrent requests cannot
+ * both succeed if the combined deduction would exceed the actual balance.
  */
 const deductWalletBalance = async (user, amount, session = null) => {
-  user.walletBalance -= Number(amount);
-  
-  if (session) {
-    await user.save({ session });
-  } else {
-    await user.save();
+  const n = Number(amount);
+  const opts = { new: true, select: '+walletBalance' };
+  if (session) opts.session = session;
+
+  const updated = await User.findOneAndUpdate(
+    { _id: user._id, walletBalance: { $gte: n } },
+    { $inc: { walletBalance: -n } },
+    opts
+  );
+
+  if (!updated) {
+    throw new Error(
+      `Insufficient wallet balance. Required: ₦${n.toLocaleString()}, Available: ₦${(user.walletBalance || 0).toLocaleString()}`
+    );
   }
-  
-  console.log(`✅ Wallet deducted: ₦${amount} | New balance: ₦${user.walletBalance}`);
+
+  user.walletBalance = updated.walletBalance; // keep in-memory object in sync
+  console.log(`✅ Wallet deducted: ₦${n} | New balance: ₦${user.walletBalance}`);
   return user.walletBalance;
 };
 
 /**
- * Refund amount to user's wallet balance
- * @param {Object} user - User object
- * @param {number} amount - Amount to refund
- * @param {Object} session - Optional MongoDB session for transactions
- * @returns {Promise<number>} New wallet balance
+ * Atomically refund amount to user's wallet balance using $inc.
+ * No condition needed for credits — always safe to add.
  */
 const refundWalletBalance = async (user, amount, session = null) => {
-  user.walletBalance += Number(amount);
-  
-  if (session) {
-    await user.save({ session });
-  } else {
-    await user.save();
-  }
-  
-  console.log(`✅ Wallet refunded: ₦${amount} | New balance: ₦${user.walletBalance}`);
+  const n = Number(amount);
+  const opts = { new: true, select: '+walletBalance' };
+  if (session) opts.session = session;
+
+  const updated = await User.findOneAndUpdate(
+    { _id: user._id },
+    { $inc: { walletBalance: n } },
+    opts
+  );
+
+  if (!updated) throw new Error('User not found during wallet refund');
+
+  user.walletBalance = updated.walletBalance;
+  console.log(`✅ Wallet refunded: ₦${n} | New balance: ₦${user.walletBalance}`);
   return user.walletBalance;
 };
 

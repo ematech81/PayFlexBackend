@@ -12,7 +12,7 @@ const { checkBalance }         = require("./util/vtuAfricaMonitor");
 const { runMarginSanityCheck } = require("./util/marginSanityCheck");
 
 const connectDB = require("./config/db");
-const { apiLimiter } = require("./middleware/rateLimiter");
+const { apiLimiter, globalLimiter } = require('./middleware/rateLimiter');
 const errorHandler = require("./middleware/errorHandler");
 const verificationRoutes = require('./routes/verificationRoutes');
 const referralRoutes = require('./routes/referralRoutes');
@@ -51,13 +51,12 @@ const startServer = async () => {
     app.use('/api/webhooks/korapay',    express.raw({ type: '*/*' }));
     app.use('/api/cac/webhook',         express.raw({ type: '*/*' }));
 
-    // CAC registration, validation, and LLC affiliate routes carry base64 images
-    // (~8 MB); register larger parsers first so they take precedence.
-    app.use('/api/cac/register',    express.json({ limit: '25mb' }));
-    app.use('/api/cac/registration',express.json({ limit: '25mb' }));
-    app.use('/api/cac/validate',    express.json({ limit: '25mb' }));
-    app.use('/api/cac/llc',         express.json({ limit: '25mb' }));
-    app.use(express.json({ limit: "2mb" }));
+    // Only the specific routes that receive base64 images (~8 MB) get the 25 MB
+    // parser. Status-check, validation, and name-reservation routes stay at 2 MB
+    // so a single IP cannot exhaust server memory with a crafted large payload.
+    app.use('/api/cac/register',      express.json({ limit: '25mb' }));  // BN reg (director images)
+    app.use('/api/cac/llc/affiliate', express.json({ limit: '25mb' }));  // LLC affiliate (passport/signature)
+    app.use(express.json({ limit: '2mb' }));
 
     const allowedOrigins = process.env.ALLOWED_ORIGINS
       ? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim())
@@ -84,8 +83,9 @@ const startServer = async () => {
     app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
     // 6️⃣ Rate limiters
-    app.use("/api/auth", apiLimiter);
-    app.use("/api/kyc", apiLimiter);
+    app.use('/api', globalLimiter);   // global backstop: 200 req/min per IP across all routes
+    app.use('/api/auth', apiLimiter); // strict: 60 req/min per IP on auth
+    app.use('/api/kyc',  apiLimiter); // strict: 60 req/min per IP on KYC
 
 
     // 7️⃣ Routes
