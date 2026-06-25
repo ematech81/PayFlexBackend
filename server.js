@@ -133,10 +133,17 @@ const startServer = async () => {
     app.use(errorHandler);
 
     // 🔟 Background jobs
-    // Reconciliation: every 30 minutes — resolves pending VTU Africa transactions
-    setInterval(() => runReconciliation().catch(err =>
-      console.error('[reconciliation] Unhandled error:', err.message)
-    ), 30 * 60 * 1000);
+    // Reconciliation is gated behind RECONCILIATION_ENABLED=true so that when
+    // Railway scales to multiple instances, only one instance runs the job and
+    // duplicate refunds / duplicate push notifications are avoided.
+    if (process.env.RECONCILIATION_ENABLED === 'true') {
+      console.log('[reconciliation] Job enabled on this instance.');
+      setInterval(() => runReconciliation().catch(err =>
+        console.error('[reconciliation] Unhandled error:', err.message)
+      ), 30 * 60 * 1000);
+    } else {
+      console.log('[reconciliation] Job disabled on this instance (set RECONCILIATION_ENABLED=true to enable).');
+    }
 
     // Balance monitor: every hour — alerts ops when VTU Africa balance is low
     setInterval(() => checkBalance().catch(err =>

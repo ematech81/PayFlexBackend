@@ -4,8 +4,17 @@
  * Reconciliation Job
  *
  * Runs on a 30-minute cron schedule (registered in server.js or a process manager).
+ * Controlled by RECONCILIATION_ENABLED=true env var — only one instance should run
+ * this job to avoid duplicate refunds and duplicate push notifications when Railway
+ * scales to multiple instances.
+ *
  * Finds ExamPinTransaction and BettingTransaction records that are still "pending"
  * after 5 minutes, queries VTU Africa for their real status, and resolves them.
+ *
+ * Also handles stuck CAC (BN + LLC) registration transactions:
+ *   - BN registrations pending >15 min: polls VAS status endpoint and resolves.
+ *   - LLC cac_registration transactions pending >2 hours: refunds as a safety net
+ *     (no LLC status-check endpoint is available; the webhook is the primary path).
  *
  * Also queries stuck bank_transfer transactions in 'processing' status after 10
  * minutes via KoraPay payout status endpoint, and refunds on confirmed failure.
@@ -21,29 +30,32 @@
 
 const mongoose           = require('mongoose');
 const vtuAfricaService   = require('../services/vtuAfricaService');
+const cacVasService      = require('../services/cacVasService');
 const koraTransfer       = require('../services/koraTransferService');
 const vtuTransferService = require('../services/vtuAfricaTransferService');
 const ExamPinTransaction = require('../models/ExamPinTransaction');
 const BettingTransaction = require('../models/BettingTransaction');
+const CACRegistration    = require('../models/cacRegistration');
 const Transaction        = require('../models/transaction');
 const User               = require('../models/user');
 const { refundWalletBalance } = require('./paymentHelper');
 
 const PENDING_GRACE_MS   = 5  * 60 * 1000; // 5 min before we start querying
+const CAC_BN_GRACE_MS    = 15 * 60 * 1000; // 15 min before polling BN status
 const TRANSFER_GRACE_MS  = 10 * 60 * 1000; // 10 min for KoraPay payouts
 const STALE_ALERT_MS     = 2  * 60 * 60 * 1000; // 2 hr — ops alert threshold
 
 // ─── Main export ──────────────────────────────────────────────────────────────
 async function runReconciliation() {
-  const now       = new Date();
-  const graceAge  = new Date(now - PENDING_GRACE_MS);
-  const staleAge  = new Date(now - STALE_ALERT_MS);
+  const now              = new Date();
+  const graceAge         = new Date(now - PENDING_GRACE_MS);
+  const staleAge         = new Date(now - STALE_ALERT_MS);
+  const cacBnGraceAge    = new Date(now - CAC_BN_GRACE_MS);
+  const transferGraceAge = new Date(now - TRANSFER_GRACE_MS);
 
   console.log(`[reconciliation] Starting run at ${now.toISOString()}`);
 
-  const transferGraceAge = new Date(now - TRANSFER_GRACE_MS);
-
-  const [examTxs, bettingTxs, a2cTxs, transferTxs, vtuTransferTxs] = await Promise.all([
+  const [examTxs, bettingTxs, a2cTxs, transferTxs, vtuTransferTxs, pendingBnRegs, stuckLlcTxs] = await Promise.all([
     ExamPinTransaction.find({
       status:    'pending',
       createdAt: { $lte: graceAge },
@@ -69,15 +81,35 @@ async function runReconciliation() {
       status:    'processing',
       createdAt: { $lte: transferGraceAge },
     }),
+    // BN registrations pending >15 min without a webhook: poll VAS for status.
+    CACRegistration.find({
+      status:          'pending',
+      webhookReceived: false,
+      createdAt:       { $lte: cacBnGraceAge },
+    }),
+    // LLC cac_registration transactions pending >2 hours: refund as a safety net.
+    // LLC txns set metadata.sessionId; BN txns do not — this distinguishes them.
+    Transaction.find({
+      type:              'cac_registration',
+      status:            'pending',
+      'metadata.sessionId': { $exists: true },
+      createdAt:         { $lte: staleAge },
+    }),
   ]);
 
-  console.log(`[reconciliation] Found ${examTxs.length} exam + ${bettingTxs.length} betting + ${a2cTxs.length} A2C + ${transferTxs.length} KoraPay transfer + ${vtuTransferTxs.length} VTU transfer pending.`);
+  console.log(
+    `[reconciliation] Found ${examTxs.length} exam + ${bettingTxs.length} betting + ` +
+    `${a2cTxs.length} A2C + ${transferTxs.length} KoraPay transfer + ${vtuTransferTxs.length} VTU transfer + ` +
+    `${pendingBnRegs.length} BN reg + ${stuckLlcTxs.length} LLC txn pending.`
+  );
 
-  for (const tx of examTxs)        { await _resolveExam(tx, staleAge);        }
-  for (const tx of bettingTxs)     { await _resolveBetting(tx, staleAge);     }
-  for (const tx of a2cTxs)         { await _resolveA2C(tx, staleAge);         }
-  for (const tx of transferTxs)    { await _resolveTransfer(tx, staleAge);    }
-  for (const tx of vtuTransferTxs) { await _resolveVtuTransfer(tx, staleAge); }
+  for (const tx  of examTxs)        { await _resolveExam(tx, staleAge);                  }
+  for (const tx  of bettingTxs)     { await _resolveBetting(tx, staleAge);               }
+  for (const tx  of a2cTxs)         { await _resolveA2C(tx, staleAge);                   }
+  for (const tx  of transferTxs)    { await _resolveTransfer(tx, staleAge);              }
+  for (const tx  of vtuTransferTxs) { await _resolveVtuTransfer(tx, staleAge);           }
+  for (const reg of pendingBnRegs)  { await _resolvePendingBnRegistration(reg, staleAge); }
+  for (const tx  of stuckLlcTxs)    { await _resolveStuckLlcTransaction(tx);              }
 
   console.log('[reconciliation] Run complete.');
 }
@@ -262,6 +294,110 @@ async function _resolveTransfer(tx, staleAge) {
     }
   } catch (err) {
     console.error(`[reconciliation] Error resolving transfer ref ${ref}:`, err.message);
+  }
+}
+
+// ─── BN registration resolution ──────────────────────────────────────────────
+// Handles the window where the server crashed after Phase 1 (wallet deducted,
+// CACRegistration created) but before Phase 2 completed (VAS call + refund on
+// failure). The CAC VAS status endpoint is used to determine the real outcome.
+async function _resolvePendingBnRegistration(reg, staleAge) {
+  const txRef = reg.transactionRef;
+  try {
+    if (reg.createdAt <= staleAge) {
+      console.error(`[reconciliation] ALERT: BN reg ${txRef} has been pending for >2 hours — manual review required.`);
+    }
+
+    // Use the VAS-generated ref if available, otherwise fall back to ours.
+    const vasRef = reg.vasTransactionRef || txRef;
+    let vasStatus;
+
+    try {
+      const vasResult = await cacVasService.checkRegistrationStatus({ transactionRef: vasRef });
+      const vasData   = vasResult?.data || vasResult;
+      vasStatus       = vasData?.status;
+    } catch (vasErr) {
+      // 404 from VAS + older than 2 hours → VAS never received the registration.
+      // Refund so the user can retry.
+      if (vasErr.statusCode === 404 && reg.createdAt <= staleAge) {
+        console.warn(`[reconciliation] BN reg ${txRef} — VAS 404 and >2 hours old. Refunding.`);
+        await _refundBnRegistration(reg, 'VAS returned 404 — registration was never received');
+      } else {
+        console.warn(`[reconciliation] BN reg ${txRef} — VAS check error: ${vasErr.message}. Will retry next run.`);
+      }
+      return;
+    }
+
+    if (!vasStatus || vasStatus === 'pending' || vasStatus === 'processing') {
+      return; // still processing — leave it for next run
+    }
+
+    if (vasStatus === 'approved') {
+      await CACRegistration.findByIdAndUpdate(reg._id, {
+        status:            'approved',
+        webhookReceived:   true,
+        webhookReceivedAt: new Date(),
+      });
+      if (reg.billingTransactionRef) {
+        await Transaction.findOneAndUpdate({ reference: reg.billingTransactionRef }, { status: 'success' });
+      }
+      console.log(`[reconciliation] BN reg ${txRef} resolved → approved.`);
+    } else if (vasStatus === 'queried') {
+      await CACRegistration.findByIdAndUpdate(reg._id, { status: 'queried' });
+      console.log(`[reconciliation] BN reg ${txRef} resolved → queried.`);
+    } else if (vasStatus === 'failed' || vasStatus === 'rejected') {
+      await _refundBnRegistration(reg, `VAS status: ${vasStatus}`);
+    } else {
+      console.warn(`[reconciliation] BN reg ${txRef} — unrecognised VAS status '${vasStatus}'. Will retry next run.`);
+    }
+  } catch (err) {
+    console.error(`[reconciliation] Error resolving BN reg ${txRef}:`, err.message);
+  }
+}
+
+async function _refundBnRegistration(reg, reason) {
+  try {
+    const user = await User.findById(reg.userId).select('+walletBalance');
+    if (user) {
+      await refundWalletBalance(user, reg.userPaid);
+      console.log(`[reconciliation] Refunded ₦${reg.userPaid} to user ${reg.userId} for BN reg ${reg.transactionRef}.`);
+    } else {
+      console.error(`[reconciliation] CRITICAL: Cannot refund — user ${reg.userId} not found for BN reg ${reg.transactionRef}.`);
+    }
+    await CACRegistration.findByIdAndUpdate(reg._id, { status: 'failed' });
+    if (reg.billingTransactionRef) {
+      await Transaction.findOneAndUpdate(
+        { reference: reg.billingTransactionRef },
+        { status: 'failed', failureReason: `Reconciliation: ${reason}` }
+      );
+    }
+  } catch (err) {
+    console.error(`[reconciliation] CRITICAL: Refund failed for BN reg ${reg.transactionRef}:`, err.message);
+  }
+}
+
+// ─── LLC registration safety-net ─────────────────────────────────────────────
+// LLC does not have a status-check endpoint, so we conservatively refund after
+// 2 hours. By then, if VAS had accepted the submission, a webhook would normally
+// have fired. The user's session stays in 'psc_registered' status so they can
+// re-attempt the submit step after their wallet is refunded.
+async function _resolveStuckLlcTransaction(txn) {
+  const ref = txn.reference;
+  try {
+    console.error(`[reconciliation] ALERT: LLC cac_registration ref ${ref} has been pending for >2 hours — refunding.`);
+    const user = await User.findById(txn.userId).select('+walletBalance');
+    if (user) {
+      await refundWalletBalance(user, txn.amount);
+      console.log(`[reconciliation] Refunded ₦${txn.amount} to user ${txn.userId} for stuck LLC txn ${ref}.`);
+    } else {
+      console.error(`[reconciliation] CRITICAL: Cannot refund LLC txn ${ref} — user ${txn.userId} not found.`);
+    }
+    await Transaction.findByIdAndUpdate(txn._id, {
+      status:        'refunded',
+      failureReason: 'Reconciliation: stuck pending >2 hours — automatic safety-net refund',
+    });
+  } catch (err) {
+    console.error(`[reconciliation] Error refunding stuck LLC txn ${ref}:`, err.message);
   }
 }
 
