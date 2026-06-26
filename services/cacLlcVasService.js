@@ -190,7 +190,7 @@ async function submitRegistration({ transactionRef }) {
 }
 
 async function getNatureOfBusinessCategories() {
-  return _get('/api/vas/llc/nature-of-business');
+  return _get('/api/vas/llc/nob/categories');
 }
 
 module.exports = {
