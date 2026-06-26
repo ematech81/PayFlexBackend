@@ -653,6 +653,17 @@ const getLlcHistory = async (req, res) => {
   }
 };
 
+// ─── GET /api/cac/llc/vas-categories ─────────────────────────────────────────
+const getVasCategories = async (req, res) => {
+  try {
+    const data = await cacLlcVas.getNatureOfBusinessCategories();
+    return res.json({ success: true, data });
+  } catch (err) {
+    console.error('[cac-llc] getVasCategories error:', err.message, err.response?.status);
+    return res.status(err.statusCode || 502).json({ success: false, message: err.message });
+  }
+};
+
 module.exports = {
   nameReservation,
   generateMemoObjects,
@@ -664,4 +675,5 @@ module.exports = {
   submitRegistration,
   getLlcSession,
   getLlcHistory,
+  getVasCategories,
 };

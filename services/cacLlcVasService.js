@@ -37,6 +37,18 @@ function _redactKey(str) {
 
 function _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+async function _get(path) {
+  const key = _getKey();
+  const url = `${BASE_URL()}${path}`;
+  console.log(`[CAC LLC VAS] → GET ${url}`);
+  const { data } = await axios.get(url, {
+    timeout: TIMEOUT_MS,
+    headers: { 'Content-Type': 'application/json', 'X_API_KEY': key },
+  });
+  console.log(`[CAC LLC VAS] ← GET OK from ${path}:`, JSON.stringify(data, null, 2));
+  return data;
+}
+
 async function _post(path, body = {}) {
   const key = _getKey();
   const url = `${BASE_URL()}${path}`;
@@ -177,6 +189,10 @@ async function submitRegistration({ transactionRef }) {
   return _post('/api/vas/llc/register', { transactionRef });
 }
 
+async function getNatureOfBusinessCategories() {
+  return _get('/api/vas/llc/nature-of-business');
+}
+
 module.exports = {
   reserveName,
   generateMemoObjects,
@@ -186,4 +202,5 @@ module.exports = {
   registerAffiliate,
   registerPsc,
   submitRegistration,
+  getNatureOfBusinessCategories,
 };
