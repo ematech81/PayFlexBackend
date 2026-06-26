@@ -60,6 +60,7 @@ const {
   registerPsc,
   submitRegistration,
   getVasCategories,
+  getVasNatureOfBusiness,
 } = require('../controllers/cacLlcController');
 
 router.post('/llc/name-reservation',        protect, nameReservation);
@@ -73,5 +74,6 @@ router.post('/llc/submit',                  protect, submitRegistration);
 router.get('/llc/registration/:sessionId',  protect, getLlcSession);
 router.get('/llc/history',                  protect, getLlcHistory);
 router.get('/llc/vas-categories',           protect, getVasCategories);
+router.get('/llc/nob/:categoryId',          protect, getVasNatureOfBusiness);
 
 module.exports = router;

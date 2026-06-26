@@ -193,6 +193,10 @@ async function getNatureOfBusinessCategories() {
   return _get('/api/vas/llc/nob/categories');
 }
 
+async function getNatureOfBusiness(categoryId) {
+  return _get(`/api/vas/llc/nob/${categoryId}`);
+}
+
 module.exports = {
   reserveName,
   generateMemoObjects,
@@ -203,4 +207,5 @@ module.exports = {
   registerPsc,
   submitRegistration,
   getNatureOfBusinessCategories,
+  getNatureOfBusiness,
 };
