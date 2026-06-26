@@ -49,7 +49,7 @@ async function _post(path, body = {}) {
         timeout: TIMEOUT_MS,
         headers: { 'Content-Type': 'application/json', 'X_API_KEY': key },
       });
-      console.log(`[CAC LLC VAS] ← OK from ${path}`);
+      console.log(`[CAC LLC VAS] ← OK from ${path}:`, JSON.stringify(data, null, 2));
       return data;
     } catch (err) {
       const httpStatus  = err.response?.status;
@@ -62,7 +62,7 @@ async function _post(path, body = {}) {
         `[CAC LLC VAS] POST failed (attempt ${attempt}/${MAX_RETRIES}): HTTP ${httpStatus ?? '(no response)'}`,
         _redactKey(err.message)
       );
-      console.warn('[CAC LLC VAS] Response body:', rawBody != null ? JSON.stringify(rawBody).substring(0, 500) : '(empty)');
+      console.warn('[CAC LLC VAS] Response body (full):', rawBody != null ? JSON.stringify(rawBody, null, 2) : '(empty)');
       lastErr = err;
       if (!isRetryable || attempt === MAX_RETRIES) break;
       await _sleep(attempt * 1_000);

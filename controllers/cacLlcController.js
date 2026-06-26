@@ -262,7 +262,7 @@ const createCompany = async (req, res) => {
       companyAddress,
       objectsOfMem: cleanObjects,
     };
-    console.log('[cac-llc] createCompany VAS payload:', JSON.stringify(createPayload).substring(0, 800));
+    console.log('[cac-llc] createCompany VAS payload (full):', JSON.stringify(createPayload, null, 2));
 
     const vasResult = await cacLlcVas.createCompany(createPayload);
 
