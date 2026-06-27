@@ -61,7 +61,7 @@ const {
   submitRegistration,
   getVasCategories,
   getVasNatureOfBusiness,
-  getRegistrationStatus,
+  getRegistrationStatus: getLlcRegistrationStatus,
 } = require('../controllers/cacLlcController');
 
 router.post('/llc/name-reservation',        protect, nameReservation);
@@ -73,7 +73,7 @@ router.post('/llc/affiliate',               protect, registerAffiliate);
 router.post('/llc/psc',                     protect, registerPsc);
 router.post('/llc/submit',                  protect, submitRegistration);
 router.get('/llc/registration/:sessionId',        protect, getLlcSession);
-router.get('/llc/registration/:sessionId/status', protect, getRegistrationStatus);
+router.get('/llc/registration/:sessionId/status', protect, getLlcRegistrationStatus);
 router.get('/llc/history',                  protect, getLlcHistory);
 router.get('/llc/vas-categories',           protect, getVasCategories);
 router.get('/llc/nob/:categoryId',          protect, getVasNatureOfBusiness);
