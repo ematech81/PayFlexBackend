@@ -189,6 +189,10 @@ async function submitRegistration({ transactionRef }) {
   return _post('/api/vas/llc/register', { transactionRef });
 }
 
+async function getRegistrationStatus(transactionRef) {
+  return _get(`/api/vas/llc/status/${transactionRef}`);
+}
+
 async function getNatureOfBusinessCategories() {
   return _get('/api/vas/llc/nob/categories');
 }
@@ -206,6 +210,7 @@ module.exports = {
   registerAffiliate,
   registerPsc,
   submitRegistration,
+  getRegistrationStatus,
   getNatureOfBusinessCategories,
   getNatureOfBusiness,
 };

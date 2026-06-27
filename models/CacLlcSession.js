@@ -31,10 +31,16 @@ const cacLlcSessionSchema = new mongoose.Schema(
     analysisResult:      { type: mongoose.Schema.Types.Mixed },
 
     // ── Step 4: Company Creation ──────────────────────────────────────────────
-    vasTransactionRef:        { type: String, index: true },
-    natureOfBusinessCategory: { type: String },
-    natureOfBusiness:         { type: String },
-    companyDetails:           { type: mongoose.Schema.Types.Mixed },
+    vasTransactionRef:           { type: String, index: true },
+    natureOfBusinessCategory:    { type: String },
+    natureOfBusiness:            { type: String },
+    principalActivityDescription:{ type: String },
+    companyEmail:                { type: String },
+    companyPhone:                { type: String },
+    registeredAddress:           { type: addressSchema },
+    headOfficeAddress:           { type: addressSchema },
+    headOfficeSameAsReg:         { type: Boolean, default: true },
+    companyDetails:              { type: mongoose.Schema.Types.Mixed },
 
     // ── Step 5: Shares ────────────────────────────────────────────────────────
     ordinaryIssuedShare:   { type: Number },
@@ -47,9 +53,14 @@ const cacLlcSessionSchema = new mongoose.Schema(
     affiliateCount:               { type: Number, default: 0 },
     totalAllocatedOrdinaryShares: { type: Number, default: 0 },
 
+    // ── Step 8: Submission ────────────────────────────────────────────────────
+    vasRegistrationId: { type: String },
+    submittedAt:       { type: Date },
+    companyName:       { type: String },
+    vasStatus:         { type: String },        // PENDING / QUERIED / APPROVED
+    vasQueryReasons:   { type: mongoose.Schema.Types.Mixed }, // raw VAS query data
+
     // ── Status ────────────────────────────────────────────────────────────────
-    // Terminal states post-Step 6: 'affiliates_complete'.
-    // Steps 7–8 (PSC, Validate/Pay/Submit) pending docs — add statuses there.
     status: {
       type: String,
       enum: [
@@ -58,6 +69,10 @@ const cacLlcSessionSchema = new mongoose.Schema(
         'company_created',
         'shares_registered',
         'affiliates_complete',
+        'psc_done',
+        'submitted',
+        'approved',
+        'queried',
         'failed',
         'cancelled',
       ],

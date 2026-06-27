@@ -274,13 +274,21 @@ const createCompany = async (req, res) => {
       });
     }
 
+    const regAddr = companyAddress?.registeredAddress || {};
+    const hoAddr  = companyAddress?.headOffice        || {};
     await CacLlcSession.findByIdAndUpdate(sessionId, {
       vasTransactionRef,
       natureOfBusinessCategory,
       natureOfBusiness,
-      companyDetails: vasResult,
-      objectsOfMem:   objectsOfMem || session.objectsOfMem,
-      status:         'company_created',
+      principalActivityDescription,
+      companyEmail,
+      companyPhone:        normalizedPhone,
+      registeredAddress:   regAddr,
+      headOfficeAddress:   hoAddr,
+      headOfficeSameAsReg: !companyAddress?.headOffice,
+      companyDetails:      vasResult,
+      objectsOfMem:        objectsOfMem || session.objectsOfMem,
+      status:              'company_created',
     });
 
     return res.json({
@@ -600,9 +608,11 @@ const submitRegistration = async (req, res) => {
     }
 
     await CacLlcSession.findByIdAndUpdate(sessionId, {
-      status:           'submitted',
+      status:            'submitted',
       vasRegistrationId: vasRegId,
-      submittedAt:      new Date(),
+      companyName,
+      vasStatus:         regStatus,
+      submittedAt:       new Date(),
     });
 
     return res.json({
@@ -653,6 +663,37 @@ const getLlcHistory = async (req, res) => {
   }
 };
 
+// ─── GET /api/cac/llc/registration/:sessionId/status ─────────────────────────
+// Polls VAS for the live registration status (PENDING / QUERIED / APPROVED).
+// Only meaningful after Step 8 (submit) when vasTransactionRef exists.
+const getRegistrationStatus = async (req, res) => {
+  try {
+    const session = await CacLlcSession.findById(req.params.sessionId).lean();
+    if (!session) return res.status(404).json({ success: false, message: 'LLC session not found.' });
+    if (String(session.userId) !== String(req.user.id)) {
+      return res.status(403).json({ success: false, message: 'Access denied.' });
+    }
+    if (!session.vasTransactionRef) {
+      return res.status(400).json({ success: false, message: 'Registration has not reached the company-creation step yet.' });
+    }
+
+    const raw    = await cacLlcVas.getRegistrationStatus(session.vasTransactionRef);
+    const data   = raw?.data || raw;
+    const status = data?.status || 'PENDING';
+
+    // Persist the latest VAS status back to our session record
+    const update = { vasStatus: status };
+    if (status === 'QUERIED') update.vasQueryReasons = data;
+    if (status === 'APPROVED') update.status = 'approved';
+    await CacLlcSession.findByIdAndUpdate(session._id, update);
+
+    return res.json({ success: true, status, data });
+  } catch (err) {
+    console.error('[cac-llc] getRegistrationStatus error:', err.message);
+    return res.status(err.statusCode || 502).json({ success: false, message: err.message });
+  }
+};
+
 // ─── GET /api/cac/llc/vas-categories ─────────────────────────────────────────
 const getVasCategories = async (req, res) => {
   try {
@@ -687,6 +728,7 @@ module.exports = {
   submitRegistration,
   getLlcSession,
   getLlcHistory,
+  getRegistrationStatus,
   getVasCategories,
   getVasNatureOfBusiness,
 };
