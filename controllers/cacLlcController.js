@@ -251,11 +251,16 @@ const createCompany = async (req, res) => {
       normalizedPhone = '0' + normalizedPhone.slice(3);
     }
 
+    // VAS /company endpoint rejects strings with trailing periods (returned by its own /nob endpoint).
+    // Strip the trailing period so "WHOLESALE TRADE, EXCEPT OF MOTOR VEHICLE AND MOTORCYCLE." becomes
+    // "WHOLESALE TRADE, EXCEPT OF MOTOR VEHICLE AND MOTORCYCLE" — same content, accepted by VAS.
+    const cleanNatureOfBusiness = (natureOfBusiness || '').trim().replace(/\.$/, '');
+
     const createPayload = {
       reservationCode:         session.reservationCode,
       companyType:             session.companyType,
       natureOfBusinessCategory,
-      natureOfBusiness,
+      natureOfBusiness: cleanNatureOfBusiness,
       principalActivityDescription,
       companyEmail,
       phoneNumber:             normalizedPhone,
@@ -325,11 +330,18 @@ const registerShares = async (req, res) => {
   const shareCapital = (Number(ordinaryIssuedShare) * Number(pricePerShare))
                      + (Number(preferenceIssuedShare) * Number(pricePerShare));
 
-  // Rule 5: enforce minimumShareCapital from Step 3 analysis
-  if (session.minimumShareCapital && shareCapital < session.minimumShareCapital) {
+  // Rule 5: enforce minimumShareCapital from Step 3 analysis.
+  // VAS AI occasionally returns wildly inflated minimums (e.g. 50B for banking licence)
+  // even for standard wholesale/retail companies. Cap enforcement at 2B so normal SMEs
+  // aren't blocked by an AI classification error. VAS itself validates share capital
+  // server-side; we just want to catch obvious user mistakes.
+  const enforceableMinimum = (session.minimumShareCapital && session.minimumShareCapital <= 2_000_000_000)
+    ? session.minimumShareCapital
+    : null;
+  if (enforceableMinimum && shareCapital < enforceableMinimum) {
     return res.status(400).json({
       success: false,
-      message: `Share capital (₦${shareCapital.toLocaleString()}) is below the minimum required ₦${session.minimumShareCapital.toLocaleString()} for your business activity (Rule 5).`,
+      message: `Share capital (₦${shareCapital.toLocaleString()}) is below the minimum required ₦${enforceableMinimum.toLocaleString()} for your business activity (Rule 5).`,
     });
   }
 
