@@ -251,15 +251,20 @@ const createCompany = async (req, res) => {
       normalizedPhone = '0' + normalizedPhone.slice(3);
     }
 
-    // VAS /company endpoint rejects strings with trailing periods (returned by its own /nob endpoint).
-    // Strip the trailing period so "WHOLESALE TRADE, EXCEPT OF MOTOR VEHICLE AND MOTORCYCLE." becomes
-    // "WHOLESALE TRADE, EXCEPT OF MOTOR VEHICLE AND MOTORCYCLE" — same content, accepted by VAS.
+    // VAS /nob/categories returns names with semicolons like
+    // "WHOLESALE AND RETAIL TRADE;REPAIR OF MOTOR VEHICLES..." but its /company
+    // endpoint rejects semicolons as "security restricted character". Strip the
+    // semicolon and everything after it — VAS expects just the primary category.
+    const cleanCategory = (natureOfBusinessCategory || '').split(';')[0].trim();
+
+    // VAS /company endpoint also rejects strings with trailing periods returned
+    // by its own /nob/:id endpoint. Strip the trailing period.
     const cleanNatureOfBusiness = (natureOfBusiness || '').trim().replace(/\.$/, '');
 
     const createPayload = {
       reservationCode:         session.reservationCode,
       companyType:             session.companyType,
-      natureOfBusinessCategory,
+      natureOfBusinessCategory: cleanCategory,
       natureOfBusiness: cleanNatureOfBusiness,
       principalActivityDescription,
       companyEmail,
