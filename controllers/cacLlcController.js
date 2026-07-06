@@ -251,20 +251,15 @@ const createCompany = async (req, res) => {
       normalizedPhone = '0' + normalizedPhone.slice(3);
     }
 
-    // VAS /nob/categories returns names with semicolons like
-    // "WHOLESALE AND RETAIL TRADE;REPAIR OF MOTOR VEHICLES..." but its /company
-    // endpoint rejects semicolons as "security restricted character". Strip the
-    // semicolon and everything after it — VAS expects just the primary category.
-    const cleanCategory = (natureOfBusinessCategory || '').split(';')[0].trim();
-
-    // VAS /company endpoint also rejects strings with trailing periods returned
-    // by its own /nob/:id endpoint. Strip the trailing period.
+    // VAS /company expects natureOfBusinessCategory as the category_id (e.g. "K7u5fK"),
+    // not the category_name. The frontend now sends the id. Strip trailing periods
+    // from natureOfBusiness — VAS /nob returns strings ending with "." that /company rejects.
     const cleanNatureOfBusiness = (natureOfBusiness || '').trim().replace(/\.$/, '');
 
     const createPayload = {
       reservationCode:         session.reservationCode,
       companyType:             session.companyType,
-      natureOfBusinessCategory: cleanCategory,
+      natureOfBusinessCategory,
       natureOfBusiness: cleanNatureOfBusiness,
       principalActivityDescription,
       companyEmail,
