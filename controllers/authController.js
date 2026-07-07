@@ -594,6 +594,36 @@ exports.verifyDeviceOtp = async (req, res, next) => {
       });
     }
 
+    // Reviewer bypass: REVIEWER_ACCESS_KEY skips OTP entirely
+    const reviewerKey = process.env.REVIEWER_ACCESS_KEY;
+    if (reviewerKey && otp.trim().toUpperCase() === reviewerKey.toUpperCase()) {
+      const normalizedDeviceId = deviceId.trim().toLowerCase();
+      if (!user.devices) user.devices = [];
+      if (!user.devices.map(d => d.toLowerCase()).includes(normalizedDeviceId)) {
+        user.devices.push(normalizedDeviceId);
+      }
+      user.lastLogin = new Date();
+      await user.save();
+      const token = signToken(user);
+      return res.status(200).json({
+        success: true,
+        message: "Device verified successfully",
+        token,
+        user: {
+          id: user._id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          phone: maskPhone(user.phone),
+          isPhoneVerified: user.isPhoneVerified,
+          kyc: user.kyc,
+          walletBalance: user.walletBalance,
+          roles: user.roles,
+          requirePinOnOpen: user.requirePinOnOpen ?? true,
+        },
+      });
+    }
+
     // Step 4: Check if OTP exists
     if (!user.phoneOTP || !user.phoneOTPExpires) {
       return res.status(400).json({
