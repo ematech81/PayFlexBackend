@@ -852,7 +852,6 @@ exports.setPin = async (req, res, next) => {
 exports.verifyLoginPin = async (req, res) => {
   try {
     const { phone, pin } = req.body;
-    console.log("Verify login PIN attempt:", { phone, pin });
     if (!phone || !pin || !/^\d{6}$/.test(pin)) {
       return res
         .status(400)
@@ -867,14 +866,7 @@ exports.verifyLoginPin = async (req, res) => {
         .json({ message: "Invalid phone number or PIN not set" });
     }
 
-    console.log(
-      "Comparing PIN for phone:",
-      phone,
-      "Stored pinHash:",
-      user.pinHash
-    );
     const isMatch = await bcrypt.compare(String(pin), user.pinHash);
-    console.log("PIN match result:", isMatch);
     if (!isMatch) {
       return res.status(403).json({ message: "Invalid Login PIN" });
     }
