@@ -68,8 +68,10 @@ const createTransaction = async (userId, type, serviceID, amount, phoneNumber) =
  * Process successful verification
  */
 const processSuccessfulVerification = async (user, transaction, apiResponse, verificationType) => {
-  // Deduct from wallet
+  // Deduct from wallet and mark as verified
   user.walletBalance -= transaction.amount;
+  if (verificationType === 'NIN') user.isNINVerified = true;
+  else if (verificationType === 'BVN') user.isBVNVerified = true;
   await user.save();
 
   // Update transaction

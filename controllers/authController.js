@@ -1428,6 +1428,8 @@ exports.me = async (req, res, next) => {
         walletBalance: u.walletBalance || 0,
         roles: u.roles,
         profileImage: u.profileImage || null,
+        isNINVerified: u.isNINVerified || false,
+        isBVNVerified: u.isBVNVerified || false,
       },
       transactionPinSet: !!u.transactionPinHash
     });
